@@ -25,7 +25,7 @@ jobs:
     outputs:
       version: ${{ steps.bump.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Raise the version
         id: bump
@@ -67,7 +67,7 @@ jobs:
             targets: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: v${{ needs.version.outputs.version }}
       - name: Linux libraries
