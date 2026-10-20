@@ -1,9 +1,15 @@
-# Actions → Release → Run workflow: raises the version (or keeps it with
-# "none", for a first release), commits and tags it, builds the macOS,
-# Windows and Linux packages and publishes them on the Releases page.
+# Raises the version, commits and tags it, builds the macOS, Windows and
+# Linux packages and publishes them on the Releases page. Runs by itself
+# once CI passes on main, as the next patch version, when the program has
+# changed since the last release. By hand (Actions → Release → Run workflow)
+# for a minor or major version, or "none" to release the current one.
 name: Release
 
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       bump:
@@ -22,18 +28,41 @@ env:
 
 jobs:
   version:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.bump.outputs.version }}
+      release: ${{ steps.changes.outputs.release }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # After a push: only when CI passed on what main is now (a newer push
+      # gets its own run) and the program changed since the last release.
+      - name: Anything to release
+        id: changes
+        run: |
+          release=true
+          if [ "${{ github.event_name }}" = workflow_run ]; then
+            last=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+            if [ "$(git rev-parse HEAD)" != "${{ github.event.workflow_run.head_sha }}" ]; then
+              echo "main has moved on since this CI run"
+              release=false
+            elif [ -n "$last" ] && git diff --quiet "$last" HEAD -- src ui driver assets translations packaging build.rs Cargo.toml Cargo.lock; then
+              echo "The program has not changed since $last"
+              release=false
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.changes.outputs.release == 'true'
       - name: Raise the version
         id: bump
+        if: steps.changes.outputs.release == 'true'
         run: |
           current=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
           IFS=. read -r major minor patch <<< "$current"
-          case "${{ inputs.bump }}" in
+          case "${{ inputs.bump || 'patch' }}" in
             major) major=$((major + 1)); minor=0; patch=0 ;;
             minor) minor=$((minor + 1)); patch=0 ;;
             patch) patch=$((patch + 1)) ;;
@@ -46,6 +75,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Commit and tag
+        if: steps.changes.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -65,6 +95,7 @@ jobs:
 
   build:
     needs: version
+    if: needs.version.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
