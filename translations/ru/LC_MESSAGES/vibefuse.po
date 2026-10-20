@@ -1,0 +1,319 @@
+# Russian translation of VibeFuse.
+# This file is distributed under the same license as VibeFuse (GPL-3.0-or-later).
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: ru\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+msgid "{}, dB"
+msgstr "{}, дБ"
+
+msgid "Name of {}"
+msgstr "Название: {}"
+
+msgid "Pan {}"
+msgstr "Панорама: {}"
+
+msgid "Mute {}"
+msgstr "Выключить звук: {}"
+
+msgid "Level {}"
+msgstr "Уровень: {}"
+
+msgid "Sample rate"
+msgstr "Частота дискретизации"
+
+msgid "Settings"
+msgstr "Настройки"
+
+msgid "Done"
+msgstr "Готово"
+
+msgid "Input 1"
+msgstr "Вход 1"
+
+msgid "Output"
+msgstr "Выход"
+
+msgid "Mix"
+msgstr "Микс"
+
+msgid "Mix → USB in 1/2"
+msgstr "Микс → USB-вход 1/2"
+
+msgid "Mix → outputs"
+msgstr "Микс → выходы"
+
+msgid "MiniFuse 1 is in storage mode"
+msgstr "MiniFuse 1 в режиме накопителя"
+
+msgid "Connect your MiniFuse 1"
+msgstr "Подключите MiniFuse 1"
+
+msgid "Switch to audio mode"
+msgstr "Включить аудиорежим"
+
+msgid "Language"
+msgstr "Язык"
+
+msgid "System"
+msgstr "Как в системе"
+
+msgid "Start at login"
+msgstr "Запускать при входе в систему"
+
+msgid "Starts hidden in the menu bar."
+msgstr "Без окна, значком в строке меню."
+
+msgid "Starts hidden in the tray."
+msgstr "Без окна, значком в трее."
+
+msgid "Virtual outputs"
+msgstr "Виртуальные выходы"
+
+msgid "Extra playback and recording devices for apps."
+msgstr "Дополнительные устройства воспроизведения и записи для программ."
+
+msgid "Install…"
+msgstr "Установить…"
+
+msgid "Update…"
+msgstr "Обновить…"
+
+msgid "Reinstall…"
+msgstr "Переустановить…"
+
+msgid "Remove"
+msgstr "Удалить"
+
+msgid "An older version is installed."
+msgstr "Установлена старая версия."
+
+msgid "Installed, but the system has not loaded them."
+msgstr "Установлены, но система их не загрузила."
+
+msgid "Installed. In apps, choose the devices named “VibeFuse”."
+msgstr "Установлены. В программах выбирайте устройства «VibeFuse»."
+
+msgid "Waiting for the administrator password…"
+msgstr "Жду пароль администратора…"
+
+msgid "Working…"
+msgstr "Подождите…"
+
+msgid "VibeFuse wants to install its virtual outputs."
+msgstr "VibeFuse устанавливает виртуальные выходы."
+
+msgid "VibeFuse wants to remove its virtual outputs."
+msgstr "VibeFuse удаляет виртуальные выходы."
+
+msgid "the system did not load the virtual outputs"
+msgstr "система не загрузила виртуальные выходы"
+
+msgid "Virtual outputs installed"
+msgstr "Виртуальные выходы установлены"
+
+msgid "Virtual outputs removed"
+msgstr "Виртуальные выходы удалены"
+
+msgid "Import…"
+msgstr "Импорт…"
+
+msgid "Export…"
+msgstr "Экспорт…"
+
+msgid "Import settings"
+msgstr "Импорт настроек"
+
+msgid "Export settings"
+msgstr "Экспорт настроек"
+
+msgid "MiniFuse preset"
+msgstr "Пресет MiniFuse"
+
+msgid "MiniFuse Control Center settings"
+msgstr "Настройки MiniFuse Control Center"
+
+msgid "Settings imported"
+msgstr "Настройки импортированы"
+
+msgid "Settings exported"
+msgstr "Настройки экспортированы"
+
+msgid "The file has no settings for this device"
+msgstr "В файле нет настроек этой карты"
+
+msgid "The file has no MiniFuse 1 settings"
+msgstr "В файле нет настроек MiniFuse 1"
+
+msgid "Mixer settings saved. They take effect once the virtual outputs are installed."
+msgstr "Настройки микшера сохранены. Они заработают после установки виртуальных выходов."
+
+msgid "This is not a MiniFuse preset"
+msgstr "Это не пресет MiniFuse"
+
+msgid "Unknown preset version: {}"
+msgstr "Неизвестная версия пресета: {}"
+
+msgid "Couldn't read the file: {}"
+msgstr "Не удалось прочитать файл: {}"
+
+msgid "Couldn't save the file: {}"
+msgstr "Не удалось сохранить файл: {}"
+
+msgid "Couldn't save the settings: {}"
+msgstr "Не удалось сохранить настройки: {}"
+
+msgid "Couldn't change the login item: {}"
+msgstr "Не удалось изменить автозапуск: {}"
+
+msgid "Failed: {}"
+msgstr "Ошибка: {}"
+
+msgid "Firmware"
+msgstr "Прошивка"
+
+msgid "Firmware {}"
+msgstr "Прошивка {}"
+
+msgid "SN {} · firmware {}"
+msgstr "SN {} · прошивка {}"
+
+msgid "{} available"
+msgstr "доступна {}"
+
+msgid "Firmware {} is available. See Settings."
+msgstr "Доступна прошивка {}. Подробности в настройках."
+
+msgid "Version {} is available, you have {}. Update it with Arturia's software."
+msgstr "Доступна версия {}, у вас {}. Обновляется программой Arturia."
+
+msgid "Version {} is up to date."
+msgstr "Версия {} актуальна."
+
+msgid "Latest version: {}."
+msgstr "Последняя версия: {}."
+
+msgid "Version {}."
+msgstr "Версия {}."
+
+msgid "Not checked yet."
+msgstr "Ещё не проверялась."
+
+msgid "Checking Arturia's website…"
+msgstr "Проверяю сайт Arturia…"
+
+msgid "Couldn't check: {}"
+msgstr "Не удалось проверить: {}"
+
+msgid "Arturia's website did not answer"
+msgstr "Сайт Arturia не ответил"
+
+msgid "Arturia's page lists no MiniFuse 1 firmware"
+msgstr "На странице Arturia нет прошивки MiniFuse 1"
+
+msgid "Couldn't open the browser: {}"
+msgstr "Не удалось открыть браузер: {}"
+
+msgid "Download…"
+msgstr "Скачать…"
+
+msgid "Check"
+msgstr "Проверить"
+
+msgid "Checking…"
+msgstr "Проверяю…"
+
+msgid "ASIO buffer size"
+msgstr "Буфер ASIO"
+
+msgid "Smaller means less latency, larger means fewer dropouts."
+msgstr "Меньше — ниже задержка, больше — меньше пропусков звука."
+
+msgid "A spare buffer against dropouts. Arturia recommends keeping it on."
+msgstr "Запасной буфер от пропусков звука. Arturia советует его не выключать."
+
+msgid "Free software under the GPL 3.0. Not affiliated with Arturia."
+msgstr "Свободная программа под лицензией GPL 3.0. Не связана с Arturia."
+
+msgid "{} kHz"
+msgstr "{} кГц"
+
+msgid "Show VibeFuse"
+msgstr "Показать VibeFuse"
+
+msgid "Hide VibeFuse"
+msgstr "Скрыть VibeFuse"
+
+msgid "Quit"
+msgstr "Выйти"
+
+msgid "MiniFuse 1 is not responding: {}"
+msgstr "MiniFuse 1 не отвечает: {}"
+
+msgid "The mixer is not responding: {}"
+msgstr "Микшер не отвечает: {}"
+
+msgid "The mixer meters are not available: {}"
+msgstr "Индикаторы микшера недоступны: {}"
+
+msgid "Couldn't change the ASIO settings: {}"
+msgstr "Не удалось изменить настройки ASIO: {}"
+
+msgid "Couldn't switch to audio mode: {}"
+msgstr "Не удалось включить аудиорежим: {}"
+
+msgid "Couldn't change the sample rate: {}"
+msgstr "Не удалось сменить частоту: {}"
+
+msgid "No access to the USB device: install the udev rule (see the README)"
+msgstr "Нет доступа к USB-устройству: установите правило udev (см. README)"
+
+msgid "No access to the USB device"
+msgstr "Нет доступа к USB-устройству"
+
+msgid "The sound server sets the sample rate"
+msgstr "Частоту задаёт звуковой сервер"
+
+msgid "Needs PipeWire and systemd. Missing: {}."
+msgstr "Нужны PipeWire и systemd. Не найдено: {}."
+
+msgid "The PipeWire mixer did not start"
+msgstr "Микшер PipeWire не запустился"
+
+msgid "Install Arturia's MiniFuse Audio Driver"
+msgstr "Установите драйвер Arturia MiniFuse Audio Driver"
+
+msgid "Reconnect the MiniFuse 1 to switch it to audio mode"
+msgstr "Переподключите MiniFuse 1, чтобы включить аудиорежим"
+
+msgid "Mono"
+msgstr "Моно"
+
+msgid "Mono {}"
+msgstr "Моно: {}"
+
+msgid "Accent color"
+msgstr "Цвет акцента"
+
+msgid "Orange"
+msgstr "Оранжевый"
+
+msgid "Pink"
+msgstr "Розовый"
+
+msgid "Teal"
+msgstr "Бирюзовый"
+
+msgid "Violet"
+msgstr "Фиолетовый"
+
+msgid "Blue"
+msgstr "Синий"
+
+msgid "Reconnected to the MiniFuse 1 after an error."
+msgstr "После ошибки MiniFuse 1 подключена заново."
+
+msgid "The system's audio service is not responding. Restart your Mac if this lasts."
+msgstr "Звуковая служба системы не отвечает. Если это не проходит, перезагрузите Mac."

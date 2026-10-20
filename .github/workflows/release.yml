@@ -1,0 +1,108 @@
+# Actions → Release → Run workflow: raises the version, commits and tags it,
+# builds the macOS, Windows and Linux packages and publishes a release.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Part of the version to raise
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+
+concurrency: release
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Raise the version
+        id: bump
+        run: |
+          current=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          IFS=. read -r major minor patch <<< "$current"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          version="$major.$minor.$patch"
+          sed -i "0,/^version = \".*\"/s//version = \"$version\"/" Cargo.toml
+          cargo update --workspace
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Commit and tag
+        run: |
+          version=${{ steps.bump.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release $version"
+          git tag "v$version"
+          git push origin "HEAD:${{ github.ref_name }}" "v$version"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            package: UNIVERSAL=1 sh scripts/package.sh
+            targets: aarch64-apple-darwin, x86_64-apple-darwin
+          - os: windows-latest
+            package: sh scripts/package.sh
+            targets: ""
+          - os: ubuntu-22.04
+            package: sh scripts/package.sh
+            targets: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.version.outputs.version }}
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libfreetype-dev libxkbcommon-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Package
+        shell: bash
+        run: ${{ matrix.package }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ runner.os }}
+          path: |
+            target/release/VibeFuse-*.dmg
+            target/release/VibeFuse-*.zip
+            target/release/VibeFuse-*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${{ needs.version.outputs.version }}
+          gh release create "v$version" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "VibeFuse $version" \
+            --generate-notes

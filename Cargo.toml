@@ -1,0 +1,49 @@
+[package]
+name = "vibefuse"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Control panel for the Arturia MiniFuse 1 audio interface"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+keywords = ["audio", "arturia", "minifuse", "mixer"]
+categories = ["multimedia::audio"]
+publish = false
+
+[dependencies]
+# The software renderer is the fallback everywhere. On top of it macOS gets
+# Skia on Metal (Apple has deprecated OpenGL), Windows and Linux FemtoVG on
+# OpenGL: as cheap there, and the Windows build stays one file without the
+# Visual C++ runtime that Skia needs. `system-tray` brings Slint's own tray
+# icon (AppKit, Shell_NotifyIcon, StatusNotifierItem).
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "software-renderer-systemfonts", "software-renderer-path", "accessibility", "system-tray"] }
+rfd = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+sys-locale = "0.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+slint = { version = "1.18", default-features = false, features = ["renderer-skia", "unstable-winit-030"] }
+objc2 = "0.6"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+slint = { version = "1.18", default-features = false, features = ["renderer-femtovg"] }
+
+[target.'cfg(not(windows))'.dependencies]
+rusb = { version = "0.9", features = ["vendored"] }
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.9"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes"] }
+
+[build-dependencies]
+slint-build = "1.18"
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1
+
+[dev-dependencies]
+i-slint-backend-testing = "=1.18.1"
