@@ -317,3 +317,9 @@ msgstr "После ошибки MiniFuse 1 подключена заново."
 
 msgid "The system's audio service is not responding. Restart your Mac if this lasts."
 msgstr "Звуковая служба системы не отвечает. Если это не проходит, перезагрузите Mac."
+
+msgid "Custom"
+msgstr "Свой"
+
+msgid "Accent color, HEX"
+msgstr "Цвет акцента, HEX"

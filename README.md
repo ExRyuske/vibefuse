@@ -49,8 +49,8 @@ Linux needs `libfontconfig1-dev libfreetype-dev libxkbcommon-dev`; macOS needs t
 Command Line Tools. `sh scripts/package.sh` builds the release package for your system.
 
 To publish a release, run the Release workflow in GitHub Actions and pick which part of
-the version to raise. It commits the new version, tags it, and attaches the macOS, Windows
-and Linux packages to a new release.
+the version to raise, or `none` to release the current one. It commits the new version,
+tags it, and attaches the macOS, Windows and Linux packages to a new release.
 
 ## Privacy
 

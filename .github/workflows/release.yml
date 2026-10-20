@@ -1,5 +1,6 @@
-# Actions → Release → Run workflow: raises the version, commits and tags it,
-# builds the macOS, Windows and Linux packages and publishes a release.
+# Actions → Release → Run workflow: raises the version (or keeps it with
+# "none", for a first release), commits and tags it, builds the macOS,
+# Windows and Linux packages and publishes them on the Releases page.
 name: Release
 
 on:
@@ -8,7 +9,7 @@ on:
       bump:
         description: Part of the version to raise
         type: choice
-        options: [patch, minor, major]
+        options: [patch, minor, major, none]
         default: patch
 
 permissions:
@@ -36,17 +37,24 @@ jobs:
             major) major=$((major + 1)); minor=0; patch=0 ;;
             minor) minor=$((minor + 1)); patch=0 ;;
             patch) patch=$((patch + 1)) ;;
+            none) ;;
           esac
           version="$major.$minor.$patch"
-          sed -i "0,/^version = \".*\"/s//version = \"$version\"/" Cargo.toml
-          cargo update --workspace
+          if [ "$version" != "$current" ]; then
+            sed -i "0,/^version = \".*\"/s//version = \"$version\"/" Cargo.toml
+            cargo update --workspace
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Commit and tag
         run: |
           version=${{ steps.bump.outputs.version }}
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Release $version"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version is released already: pick another part to raise" >&2
+            exit 1
+          fi
+          git diff --quiet || git commit -am "Release $version"
           git tag "v$version"
           git push origin "HEAD:${{ github.ref_name }}" "v$version"
 

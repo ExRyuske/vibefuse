@@ -36,6 +36,8 @@ pub struct Settings {
     pub firmware: Option<FirmwareCheck>,
     pub language: Language,
     pub accent: Accent,
+    /// The user's own accent color, `#rrggbb`.
+    pub custom_accent: String,
 }
 
 /// The accent color of the window.
@@ -48,11 +50,13 @@ pub enum Accent {
     Teal,
     Violet,
     Blue,
+    /// `Settings::custom_accent`.
+    Custom,
 }
 
 impl Accent {
     /// In the order of `Theme.accents` in the window.
-    pub const ALL: [Accent; 5] = [
+    pub const PRESETS: [Accent; 5] = [
         Accent::Orange,
         Accent::Pink,
         Accent::Teal,
@@ -67,6 +71,7 @@ impl Accent {
             Accent::Teal => crate::tr!("Teal"),
             Accent::Violet => crate::tr!("Violet"),
             Accent::Blue => crate::tr!("Blue"),
+            Accent::Custom => crate::tr!("Custom"),
         }
     }
 }
@@ -89,6 +94,7 @@ impl Default for Settings {
             firmware: None,
             language: Language::System,
             accent: Accent::default(),
+            custom_accent: "#ff8a3d".to_owned(),
         }
     }
 }

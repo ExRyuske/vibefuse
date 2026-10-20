@@ -424,13 +424,31 @@ fn connect(app: &App) {
         });
     });
     app.on_accent_selected(|index| {
-        if let Some(&accent) = index_of(index).and_then(|i| Accent::ALL.get(i)) {
-            with(|c| {
-                c.settings.accent = accent;
+        let Some(index) = index_of(index) else { return };
+        let accent = Accent::PRESETS
+            .get(index)
+            .copied()
+            .unwrap_or(Accent::Custom);
+        with(|c| {
+            c.settings.accent = accent;
+            c.schedule_save();
+            c.push();
+        });
+    });
+    app.on_accent_hex_edited(|text| {
+        with(|c| {
+            let color = parse_hex_color(&text);
+            // Digits on the way to six are fine while typing.
+            let digits = text.trim().trim_start_matches('#');
+            let typing = digits.len() < 6 && digits.chars().all(|c| c.is_ascii_hexdigit());
+            c.accent_hex_valid = color.is_some() || typing;
+            if let Some([r, g, b]) = color {
+                c.settings.custom_accent = format!("#{r:02x}{g:02x}{b:02x}");
+                c.settings.accent = Accent::Custom;
                 c.schedule_save();
-                c.push();
-            });
-        }
+            }
+            c.push();
+        });
     });
     app.on_language_selected(|index| {
         if let Some(&language) = index_of(index).and_then(|i| Language::ALL.get(i)) {
@@ -583,6 +601,8 @@ struct Controller {
     devices_busy: bool,
     /// The device thread has reported at least once.
     heard_from_worker: bool,
+    /// The last text typed as the accent color was one.
+    accent_hex_valid: bool,
     asio: Option<Asio>,
     asio_sizes: Vec<u32>,
     firmware: FirmwareState,
@@ -604,6 +624,41 @@ fn format_rate(rate: u32) -> SharedString {
             i18n::decimal(format!("{:.1}", f64::from(rate) / 1000.0))
         )
         .into()
+    }
+}
+
+/// `#rgb`, `rgb`, `#rrggbb` or `rrggbb` as red, green and blue.
+fn parse_hex_color(text: &str) -> Option<[u8; 3]> {
+    let text = text.trim();
+    let digits: Vec<u8> = text
+        .strip_prefix('#')
+        .unwrap_or(text)
+        .chars()
+        .map(|c| c.to_digit(16).map(|d| d as u8))
+        .collect::<Option<_>>()?;
+    match digits[..] {
+        [r, g, b] => Some([r * 17, g * 17, b * 17]),
+        [r1, r2, g1, g2, b1, b2] => Some([r1 * 16 + r2, g1 * 16 + g2, b1 * 16 + b2]),
+        _ => None,
+    }
+}
+
+/// Text on a light accent is dark, on a dark one white.
+fn ink_on(rgb: [u8; 3]) -> slint::Color {
+    let linear = |c: u8| {
+        let c = f32::from(c) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * linear(rgb[0]) + 0.7152 * linear(rgb[1]) + 0.0722 * linear(rgb[2]);
+    // Where black and white contrast equally with the color.
+    if luminance > 0.179 {
+        slint::Color::from_rgb_u8(0x1d, 0x1d, 0x1f)
+    } else {
+        slint::Color::from_rgb_u8(0xff, 0xff, 0xff)
     }
 }
 
@@ -648,6 +703,7 @@ impl Controller {
             look_up_devices: false,
             devices_busy: false,
             heard_from_worker: false,
+            accent_hex_valid: true,
             asio: None,
             asio_sizes: Vec::new(),
             firmware: FirmwareState::Unknown,
@@ -1249,13 +1305,24 @@ impl Controller {
             .iter()
             .position(|&l| l == self.settings.language);
         app.set_language_index(language.map_or(0, |i| i as i32));
-        let accents: Vec<SharedString> = Accent::ALL.iter().map(|a| a.name().into()).collect();
+        let accents: Vec<SharedString> = Accent::PRESETS.iter().map(|a| a.name().into()).collect();
         if app.get_accent_names().iter().ne(accents.iter().cloned()) {
             app.set_accent_names(ModelRc::new(VecModel::from(accents)));
         }
-        let accent = Accent::ALL.iter().position(|&a| a == self.settings.accent);
-        app.global::<Theme>()
-            .set_accent_index(accent.map_or(0, |i| i as i32));
+        let theme = app.global::<Theme>();
+        let preset = Accent::PRESETS
+            .iter()
+            .position(|&a| a == self.settings.accent);
+        theme.set_accent_index(preset.unwrap_or(Accent::PRESETS.len()) as i32);
+        let custom = parse_hex_color(&self.settings.custom_accent).unwrap_or([0xff, 0x8a, 0x3d]);
+        theme.set_custom_accent(slint::Color::from_rgb_u8(custom[0], custom[1], custom[2]));
+        theme.set_on_accent(if preset.is_some() {
+            slint::Color::from_rgb_u8(0xff, 0xff, 0xff)
+        } else {
+            ink_on(custom)
+        });
+        app.set_accent_hex(self.settings.custom_accent.trim_start_matches('#').into());
+        app.set_accent_hex_valid(self.accent_hex_valid);
         let (mut text, install, removable) = self.devices.describe();
         if self.devices_busy {
             text = if cfg!(target_os = "macos") {
@@ -1696,6 +1763,52 @@ mod tests {
             .invoke_accessible_default_action();
         assert_eq!(with(|c| c.settings.accent), Some(Accent::Teal));
         assert_eq!(app.global::<Theme>().get_accent_index(), 2);
+
+        // A color of one's own, typed as HEX.
+        let hex = control(&app, "Accent color, HEX").unwrap();
+        hex.set_accessible_value("#12AB34");
+        assert_eq!(with(|c| c.settings.accent), Some(Accent::Custom));
+        assert_eq!(
+            with(|c| c.settings.custom_accent.clone()).as_deref(),
+            Some("#12ab34")
+        );
+        let theme = app.global::<Theme>();
+        assert_eq!(theme.get_accent_index(), 5);
+        assert_eq!(
+            theme.get_accent(),
+            slint::Color::from_rgb_u8(0x12, 0xab, 0x34)
+        );
+        assert_eq!(app.get_accent_hex(), "12ab34");
+        assert!(app.get_accent_hex_valid());
+        // Typos keep the color and mark the field; unfinished digits do not.
+        hex.set_accessible_value("12ab3");
+        assert!(app.get_accent_hex_valid());
+        hex.set_accessible_value("12ab3x");
+        assert!(!app.get_accent_hex_valid());
+        assert_eq!(app.get_accent_hex(), "12ab34");
+        // A light color gets dark text.
+        hex.set_accessible_value("fe0");
+        assert_eq!(
+            theme.get_on_accent(),
+            slint::Color::from_rgb_u8(0x1d, 0x1d, 0x1f)
+        );
+        // Back to a preset, which keeps the own color for later.
+        control(&app, "Orange")
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(theme.get_accent_index(), 0);
+        assert_eq!(
+            theme.get_on_accent(),
+            slint::Color::from_rgb_u8(0xff, 0xff, 0xff)
+        );
+        control(&app, "Custom")
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(theme.get_accent_index(), 5);
+        assert_eq!(
+            theme.get_accent(),
+            slint::Color::from_rgb_u8(0xff, 0xee, 0x00)
+        );
     }
 
     #[test]

@@ -24,7 +24,18 @@ RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$home/.cargo=/cargo --remap-path-p
 export RUSTFLAGS
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
 out=target/release
-python=$(command -v python3 || command -v python)
+# Windows may have a python3 that only opens the Microsoft Store.
+python=
+for candidate in python3 python; do
+	if "$candidate" -c "" >/dev/null 2>&1; then
+		python=$candidate
+		break
+	fi
+done
+if [ -z "$python" ]; then
+	echo "Python 3 is needed for THIRD-PARTY-NOTICES.txt" >&2
+	exit 1
+fi
 
 notices() {
 	"$python" scripts/third-party.py "$1/THIRD-PARTY-NOTICES.txt" >/dev/null

@@ -40,8 +40,12 @@ export struct Label {
 // accent color the user picks in the settings.
 export global Theme {
     out property <bool> dark: Palette.color-scheme != ColorScheme.light;
-    // Orange, pink, teal, violet, blue: in the order of `Accent::ALL`.
+    // Orange, pink, teal, violet, blue: in the order of `Accent::PRESETS`.
+    // An index past them picks the user's own color.
     in property <int> accent-index;
+    in property <color> custom-accent: #ff8a3d;
+    // Text on the accent: dark on a light color.
+    in property <color> on-accent: #ffffff;
     out property <[color]> accents: dark ? [#ff8a3d, #f0609e, #2bc4b4, #8b5cf6, #3b82f6] : [#ea6a10, #db2777, #0d9488, #7c3aed, #2563eb];
     out property <color> background: dark ? #1c1c1e : #f2f2f3;
     out property <color> card: dark ? #262628 : #ffffff;
@@ -51,8 +55,7 @@ export global Theme {
     out property <color> track: dark ? #18181a : #e4e4e7;
     out property <color> text: dark ? #ececee : #1d1d1f;
     out property <color> muted: dark ? #98989d : #6e6e73;
-    out property <color> accent: accents[accent-index];
-    out property <color> on-accent: #ffffff;
+    out property <color> accent: accent-index < accents.length ? accents[accent-index] : custom-accent;
     out property <color> knob: dark ? #f4f4f5 : #ffffff;
     out property <color> knob-border: dark ? #f4f4f5 : #c7c7cc;
     out property <color> green: dark ? #30d158 : #28b44c;
@@ -1067,6 +1070,84 @@ component Swatch inherits Rectangle {
     }
 }
 
+// The user's own color: a dot that picks it and its six hex digits, sent
+// with every change as typed.
+component HexField inherits Rectangle {
+    in property <string> text;
+    in property <string> label;
+    in property <color> sample;
+    in property <bool> selected;
+    // The last thing typed was a color.
+    in property <bool> valid: true;
+    callback edited(string);
+    callback picked;
+
+    width: 108px;
+    height: 30px;
+    border-radius: 15px;
+    border-width: root.selected || !root.valid ? 2px : 1px;
+    border-color: !root.valid ? Theme.red : root.selected ? root.sample : input.has-focus ? Theme.accent : Theme.border;
+    background: Theme.control;
+
+    HorizontalLayout {
+        padding-left: 5px;
+        padding-right: 10px;
+        spacing: 6px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background: root.sample;
+                accessible-role: button;
+                accessible-label: @tr("Custom");
+                accessible-checkable: true;
+                accessible-checked: root.selected;
+                accessible-action-default => {
+                    root.picked();
+                }
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.picked();
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: "#";
+            color: Theme.muted;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+
+        input := TextInput {
+            horizontal-stretch: 1;
+            text: root.text;
+            single-line: true;
+            color: Theme.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            selection-background-color: Theme.accent;
+            selection-foreground-color: Theme.on-accent;
+            accessible-role: text-input;
+            accessible-label: root.label;
+            accessible-value: root.text;
+            accessible-action-set-value(value) => {
+                root.edited(value);
+            }
+            edited => {
+                root.edited(self.text);
+            }
+        }
+    }
+}
+
 // One segment of the mix selector.
 component Tab inherits Rectangle {
     in property <string> text;
@@ -1202,6 +1283,9 @@ export component App inherits Window {
     in property <int> language-index;
     // Names of the accent colors, in the order of `Theme.accents`.
     in property <[string]> accent-names;
+    // The user's own accent color, six hex digits.
+    in property <string> accent-hex;
+    in property <bool> accent-hex-valid: true;
     in property <string> firmware-text;
     in property <bool> firmware-update;
     in property <bool> firmware-busy;
@@ -1240,7 +1324,9 @@ export component App inherits Window {
     callback renamed(int, string);
     callback rate-selected(int);
     callback language-selected(int);
+    // An index past the presets picks the user's own color.
     callback accent-selected(int);
+    callback accent-hex-edited(string);
     callback import-settings();
     callback export-settings();
     callback leave-storage();
@@ -1370,6 +1456,24 @@ export component App inherits Window {
                                 label: name;
                                 clicked => {
                                     root.accent-selected(index);
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            padding-left: 6px;
+                            HexField {
+                                label: @tr("Accent color, HEX");
+                                text: root.accent-hex;
+                                sample: Theme.custom-accent;
+                                selected: Theme.accent-index >= Theme.accents.length;
+                                valid: root.accent-hex-valid;
+                                edited(text) => {
+                                    root.accent-hex-edited(text);
+                                }
+                                picked => {
+                                    root.accent-selected(Theme.accents.length);
                                 }
                             }
                         }
