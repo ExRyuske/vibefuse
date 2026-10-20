@@ -697,6 +697,16 @@ pub mod bridge {
                 })
             }
 
+            /// Copies the frames both have; says how many.
+            fn copy_to(&self, to: &Samples) -> usize {
+                let count = self.frames.min(to.frames);
+                for i in 0..count {
+                    // SAFETY: indices stay within each buffer's frames.
+                    unsafe { *to.data.add(i * to.stride) = *self.data.add(i * self.stride) };
+                }
+                count
+            }
+
             fn interleaved(
                 buffers: &[coreaudio::AudioBuffer],
                 index: usize,
@@ -732,19 +742,14 @@ pub mod bridge {
                 )
             };
             for side in 0..2 {
-                // Card input → bridge output (the plug-in's hardware inputs).
+                // Card input → bridge output (the plug-in's hardware inputs),
+                // silence where the card has no samples.
                 if let Some(to) = Samples::interleaved(outputs, layout.bridge_output, side) {
-                    let from = Samples::of(inputs, layout.card_inputs[side]);
-                    for i in 0..to.frames {
-                        let x = match &from {
-                            // SAFETY: indices stay within each buffer's frames.
-                            Some(from) if i < from.frames => unsafe {
-                                *from.data.add(i * from.stride)
-                            },
-                            _ => 0.0,
-                        };
-                        // SAFETY: as above.
-                        unsafe { *to.data.add(i * to.stride) = x };
+                    let copied = Samples::of(inputs, layout.card_inputs[side])
+                        .map_or(0, |from| from.copy_to(&to));
+                    for i in copied..to.frames {
+                        // SAFETY: `i` stays within the buffer's frames.
+                        unsafe { *to.data.add(i * to.stride) = 0.0 };
                     }
                 }
                 // Bridge input (the Monitor mix) → card output.
@@ -752,13 +757,34 @@ pub mod bridge {
                     Samples::interleaved(inputs, layout.bridge_input, side),
                     Samples::of(outputs, layout.card_outputs[side]),
                 ) {
-                    for i in 0..to.frames.min(from.frames) {
-                        // SAFETY: indices stay within each buffer's frames.
-                        unsafe { *to.data.add(i * to.stride) = *from.data.add(i * from.stride) };
-                    }
+                    from.copy_to(&to);
                 }
             }
             0
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            #[test]
+            fn one_channel_is_copied_between_interleaved_buffers() {
+                // Stereo with three frames into mono with four.
+                let mut stereo = [1.0f32, 10.0, 2.0, 20.0, 3.0, 30.0];
+                let mut mono = [9.0f32; 4];
+                let right = Samples {
+                    data: stereo[1..].as_mut_ptr(),
+                    stride: 2,
+                    frames: 3,
+                };
+                let to = Samples {
+                    data: mono.as_mut_ptr(),
+                    stride: 1,
+                    frames: 4,
+                };
+                assert_eq!(right.copy_to(&to), 3);
+                assert_eq!(mono, [10.0, 20.0, 30.0, 9.0]);
+            }
         }
     }
 }

@@ -1,13 +1,15 @@
 #!/bin/sh
-# Builds the release package for this system into target/release:
+# Builds the release package for this system into target/dist, with the
+# slower, fully optimized `dist` profile:
 #   macOS    VibeFuse.app and VibeFuse-<version>-macos.dmg. UNIVERSAL=1 builds
 #            for Apple silicon and Intel in one app (needs `rustup target add
 #            aarch64-apple-darwin x86_64-apple-darwin`).
-#   Windows  VibeFuse-<version>-windows-x64.zip, in Git Bash. Elsewhere
+#   Windows  VibeFuse-<version>-windows-x64.exe, the program itself, and
+#            THIRD-PARTY-NOTICES.txt beside it; in Git Bash. Elsewhere
 #            `sh scripts/package.sh windows` cross-builds with mingw-w64.
 #   Linux    VibeFuse-<version>-linux-<arch>.tar.gz. Needs build-essential
 #            pkg-config libfontconfig1-dev libfreetype-dev libxkbcommon-dev.
-# Every package carries THIRD-PARTY-NOTICES.txt, which takes Python 3.
+# The packages carry THIRD-PARTY-NOTICES.txt, which takes Python 3.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -23,7 +25,7 @@ fi
 RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$home/.cargo=/cargo --remap-path-prefix=$home/.rustup=/rustup --remap-path-prefix=$here=/vibefuse"
 export RUSTFLAGS
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
-out=target/release
+out=target/dist
 # Windows may have a python3 that only opens the Microsoft Store.
 python=
 for candidate in python3 python; do
@@ -44,15 +46,14 @@ notices() {
 macos() {
 	binary=$out/vibefuse
 	if [ "${UNIVERSAL:-}" = 1 ]; then
-		for target in aarch64-apple-darwin x86_64-apple-darwin; do
-			cargo build --release --locked --target "$target"
-		done
+		# One cargo run builds both at once.
+		cargo build --profile dist --locked --target aarch64-apple-darwin --target x86_64-apple-darwin
 		binary=$out/vibefuse-universal
 		lipo -create -output "$binary" \
-			target/aarch64-apple-darwin/release/vibefuse \
-			target/x86_64-apple-darwin/release/vibefuse
+			target/aarch64-apple-darwin/dist/vibefuse \
+			target/x86_64-apple-darwin/dist/vibefuse
 	else
-		cargo build --release --locked
+		cargo build --profile dist --locked
 	fi
 
 	app=$out/VibeFuse.app
@@ -139,27 +140,25 @@ windows() {
 	MINGW* | MSYS* | CYGWIN*) target=${TARGET:-x86_64-pc-windows-msvc} ;;
 	*) target=${TARGET:-x86_64-pc-windows-gnu} ;;
 	esac
-	cargo build --release --locked --target "$target"
+	# The program is downloaded on its own, so it carries the C runtime
+	# instead of needing the Visual C++ redistributable. (MinGW builds use
+	# only what comes with Windows anyway.)
+	case "$target" in
+	*-msvc)
+		RUSTFLAGS="$RUSTFLAGS -C target-feature=+crt-static"
+		export RUSTFLAGS
+		;;
+	esac
+	cargo build --profile dist --locked --target "$target"
 
-	staging=$out/VibeFuse-windows
-	zip=VibeFuse-$version-windows-x64.zip
-	rm -rf "$staging" "$out/$zip"
-	mkdir -p "$staging"
-	cp "target/$target/release/vibefuse.exe" "$staging/VibeFuse.exe"
-	cp README.md README.ru.md "$staging/"
-	cp LICENSE "$staging/LICENSE.txt"
-	notices "$staging"
-	if command -v zip >/dev/null 2>&1; then
-		(cd "$staging" && zip -q -r "../$zip" .)
-	else
-		(cd "$staging" && 7z a -tzip -bso0 "../$zip" .)
-	fi
-	rm -rf "$staging"
-	echo "$out/$zip"
+	exe=$out/VibeFuse-$version-windows-x64.exe
+	cp "target/$target/dist/vibefuse.exe" "$exe"
+	notices "$out"
+	echo "$exe"
 }
 
 linux() {
-	cargo build --release --locked
+	cargo build --profile dist --locked
 
 	name=VibeFuse-$version-linux-$(uname -m)
 	staging=$out/$name

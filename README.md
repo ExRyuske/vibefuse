@@ -20,7 +20,8 @@ Download the latest version from the Releases page.
 - **macOS 11 or later.** Open the `.dmg` and drag VibeFuse to Applications. The app is not
   notarized, so open it the first time with right-click → Open.
 - **Windows 10 or 11.** Install Arturia's MiniFuse Audio Driver first (it comes with
-  MiniFuse Control Center). Unzip and run `VibeFuse.exe`.
+  MiniFuse Control Center). Put the `.exe` in a folder where it will stay and run it. The
+  program is not signed, so Windows asks the first time: More info → Run anyway.
 - **Linux.** Unpack the archive and run `./install.sh`. It installs VibeFuse for your user
   and adds a udev rule, so it asks for `sudo` once. `./install.sh --remove` uninstalls.
 
@@ -60,7 +61,8 @@ day for new firmware.
 
 ## License
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). Each package includes the licenses of the
-components it is built from (THIRD-PARTY-NOTICES.txt).
+GPL-3.0-or-later, see [LICENSE](LICENSE). The licenses of the components VibeFuse is
+built from are in THIRD-PARTY-NOTICES.txt, inside the macOS and Linux packages and on
+each release page.
 
 VibeFuse is not affiliated with Arturia. Arturia and MiniFuse are trademarks of Arturia.

@@ -32,7 +32,8 @@ PREBUILT = {
 def metadata(target):
     output = subprocess.check_output(
         ["cargo", "metadata", "--format-version", "1", "--filter-platform", target],
-        text=True,
+        # Not the console code page: Windows would read the UTF-8 as cp1252.
+        encoding="utf-8",
     )
     return json.loads(output)
 

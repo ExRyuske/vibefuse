@@ -111,8 +111,7 @@ pub fn run(start: Start) -> Result<(), slint::PlatformError> {
     // Slint draws on the GPU (Skia on Metal on macOS, FemtoVG on OpenGL
     // elsewhere): with moving meters that costs less than half the CPU of the
     // software renderer, which redraws and copies the whole window every
-    // frame on macOS. Without a GPU Slint falls back to the software
-    // renderer by itself (`SLINT_BACKEND=winit-software` forces it).
+    // frame on macOS. Without a GPU both draw in software by themselves.
     let (bus, restore): (Box<dyn device::Bus>, Restore) = match demo {
         Some(windows) => (
             Box::new(DemoBus::new(windows)),
@@ -609,6 +608,8 @@ struct Controller {
     message: Option<(String, Instant)>,
     unsaved: bool,
     save_timer: Timer,
+    /// Takes the message away again.
+    message_timer: Timer,
 }
 
 fn recent(at: Option<Instant>, now: Instant) -> bool {
@@ -710,6 +711,7 @@ impl Controller {
             message: None,
             unsaved: false,
             save_timer: Timer::default(),
+            message_timer: Timer::default(),
         }
     }
 
@@ -752,6 +754,13 @@ impl Controller {
 
     fn notify(&mut self, message: impl Into<String>) {
         self.message = Some((message.into(), Instant::now()));
+        self.message_timer
+            .start(TimerMode::SingleShot, MESSAGE_TTL, || {
+                with(|c| {
+                    c.message = None;
+                    c.push();
+                });
+            });
     }
 
     fn on_event(&mut self, event: Event) {
@@ -797,14 +806,17 @@ impl Controller {
                     self.firmware_on_connect();
                 }
             }
-            Event::MixerMeters(meters) => self.sls_meters = meters,
+            Event::MixerMeters(meters) => {
+                self.sls_meters = meters;
+                return self.push_meters();
+            }
             Event::Asio(asio) => self.asio = asio,
             Event::State(state) => {
                 self.raw = Some(state);
                 self.sync_from_device(now);
             }
             Event::Meters(values) => {
-                self.sync_from_device(now);
+                let changed = self.sync_from_device(now);
                 self.meters[0].feed(values[slot::INPUT_1], now);
                 self.meters[1].feed(values[slot::LOOPBACK_LEFT], now);
                 self.meters[2].feed(values[slot::LOOPBACK_RIGHT], now);
@@ -822,6 +834,9 @@ impl Controller {
                         Pace::Visible
                     }));
                 }
+                if !changed {
+                    return self.push_meters();
+                }
             }
             Event::SampleRate(rate) => self.rate = rate,
             Event::Disconnected => {
@@ -838,9 +853,12 @@ impl Controller {
     }
 
     /// Adopts the device state for controls the user is not touching.
-    fn sync_from_device(&mut self, now: Instant) {
-        let Some(raw) = self.raw else { return };
+    /// Says whether anything changed.
+    fn sync_from_device(&mut self, now: Instant) -> bool {
+        let Some(raw) = self.raw else { return false };
+        let mut changed = false;
         if !recent(self.inputs_edited, now) {
+            changed |= raw.inputs() != self.inputs;
             self.inputs = raw.inputs();
         }
         if !recent(self.mix_edited, now) {
@@ -848,8 +866,10 @@ impl Controller {
             if !mix.approx_eq(&self.mix) {
                 self.mix = mix;
                 self.remember_mix();
+                changed = true;
             }
         }
+        changed
     }
 
     fn write_input(&mut self, param: Param, on: bool) {
@@ -1244,6 +1264,29 @@ impl Controller {
         }
     }
 
+    /// The part of [`Self::push`] that meter readings change, up to 20 times
+    /// a second while the window is open: nothing else is touched.
+    fn push_meters(&self) {
+        let Some(app) = &self.app else { return };
+        app.set_meter_in(self.meters[0].display_db());
+        app.set_meter_left(self.meters[1].display_db());
+        app.set_meter_right(self.meters[2].display_db());
+        let [left, right] = self.sls_meters.mixes[self.mix_tab];
+        app.set_mix_meter_left(meter_display(left));
+        app.set_mix_meter_right(meter_display(right));
+        for (i, [left, right]) in self.sls_meters.sources.into_iter().enumerate() {
+            let Some(mut row) = self.sources.row_data(i) else {
+                continue;
+            };
+            let (left, right) = (meter_display(left), meter_display(right));
+            if row.meter_left != left || row.meter_right != right {
+                row.meter_left = left;
+                row.meter_right = right;
+                self.sources.set_row_data(i, row);
+            }
+        }
+    }
+
     fn fail(&mut self, message: String) {
         self.notify(message);
         self.push();
@@ -1351,18 +1394,11 @@ impl Controller {
         app.set_to_usb12(mix.to_usb12);
         app.set_to_outputs(mix.to_outputs);
 
-        app.set_meter_in(self.meters[0].display_db());
-        app.set_meter_left(self.meters[1].display_db());
-        app.set_meter_right(self.meters[2].display_db());
-
         app.set_mixer(self.mixer);
         app.set_mix_index(self.mix_tab as i32);
-        let mix = &self.sls.mixes[self.mix_tab];
-        app.set_mix_level(mix.output_db);
-        let [left, right] = self.sls_meters.mixes[self.mix_tab];
-        app.set_mix_meter_left(meter_display(left));
-        app.set_mix_meter_right(meter_display(right));
+        app.set_mix_level(self.sls.mixes[self.mix_tab].output_db);
         self.push_sources();
+        self.push_meters();
 
         app.set_asio(self.asio.is_some());
         if let Some(asio) = &self.asio {
@@ -1394,13 +1430,6 @@ impl Controller {
         app.set_rate_index(index);
         app.set_rate_settable(self.rate.as_ref().is_some_and(|r| r.settable));
 
-        if self
-            .message
-            .as_ref()
-            .is_some_and(|(_, at)| at.elapsed() > MESSAGE_TTL)
-        {
-            self.message = None;
-        }
         let message = self
             .message
             .as_ref()

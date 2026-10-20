@@ -112,6 +112,10 @@ pub fn app_dir() -> Option<PathBuf> {
 
 impl Settings {
     pub fn path() -> Option<PathBuf> {
+        // Tests neither read nor write the user's settings.
+        if cfg!(test) {
+            return None;
+        }
         Some(app_dir()?.join("settings.json"))
     }
 

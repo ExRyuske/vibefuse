@@ -11,12 +11,13 @@ categories = ["multimedia::audio"]
 publish = false
 
 [dependencies]
-# The software renderer is the fallback everywhere. On top of it macOS gets
-# Skia on Metal (Apple has deprecated OpenGL), Windows and Linux FemtoVG on
-# OpenGL: as cheap there, and the Windows build stays one file without the
-# Visual C++ runtime that Skia needs. `system-tray` brings Slint's own tray
-# icon (AppKit, Shell_NotifyIcon, StatusNotifierItem).
-slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "software-renderer-systemfonts", "software-renderer-path", "accessibility", "system-tray"] }
+# macOS draws with Skia on Metal (Apple has deprecated OpenGL), which falls
+# back to drawing in software by itself. Windows and Linux use FemtoVG on
+# OpenGL, as cheap there, with Slint's software renderer as the fallback;
+# the Windows build also stays one file without the Visual C++ runtime that
+# Skia needs. `system-tray` brings Slint's own tray icon (AppKit,
+# Shell_NotifyIcon, StatusNotifierItem).
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "accessibility", "system-tray"] }
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -28,7 +29,7 @@ slint = { version = "1.18", default-features = false, features = ["renderer-skia
 objc2 = "0.6"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-slint = { version = "1.18", default-features = false, features = ["renderer-femtovg"] }
+slint = { version = "1.18", default-features = false, features = ["renderer-femtovg", "renderer-software", "software-renderer-systemfonts", "software-renderer-path"] }
 
 [target.'cfg(not(windows))'.dependencies]
 rusb = { version = "0.9", features = ["vendored"] }
@@ -40,10 +41,27 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [build-dependencies]
 slint-build = "1.18"
 
+# Local release builds compile in parallel. The packages use `dist`, which
+# takes longer for a smaller and faster program.
 [profile.release]
-lto = "thin"
 strip = true
+
+# Dependencies are built once: one unit each is less work in all.
+[profile.release.package."*"]
 codegen-units = 1
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
+# Line numbers are all tests and debug builds need from debug info: much
+# less to write and link than the full information.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 [dev-dependencies]
 i-slint-backend-testing = "=1.18.1"

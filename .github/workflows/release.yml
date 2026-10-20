@@ -46,17 +46,22 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Commit and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           version=${{ steps.bump.outputs.version }}
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+          if gh release view "v$version" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "v$version is released already: pick another part to raise" >&2
             exit 1
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git diff --quiet || git commit -am "Release $version"
-          git tag "v$version"
-          git push origin "HEAD:${{ github.ref_name }}" "v$version"
+          git push origin "HEAD:${{ github.ref_name }}"
+          # A tag without a release is left over from a failed run: it moves
+          # to this commit, so a fixed retry builds the fix.
+          git tag --force "v$version"
+          git push --force origin "refs/tags/v$version"
 
   build:
     needs: version
@@ -92,9 +97,10 @@ jobs:
         with:
           name: package-${{ runner.os }}
           path: |
-            target/release/VibeFuse-*.dmg
-            target/release/VibeFuse-*.zip
-            target/release/VibeFuse-*.tar.gz
+            target/dist/VibeFuse-*.dmg
+            target/dist/VibeFuse-*.exe
+            target/dist/VibeFuse-*.tar.gz
+            target/dist/THIRD-PARTY-NOTICES.txt
           if-no-files-found: error
 
   publish:
