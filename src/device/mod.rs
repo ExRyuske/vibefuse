@@ -187,6 +187,19 @@ pub fn system_bus() -> Box<dyn Bus> {
     }
 }
 
+/// What to tell when the device thread does not report at all: on macOS it
+/// waits for the audio server, elsewhere for the driver or USB.
+pub fn unresponsive() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        crate::virtual_devices::unresponsive()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        crate::tr!("MiniFuse 1 is not responding. Reconnect it if this lasts.")
+    }
+}
+
 /// Pause between consecutive writes, as the official app does.
 const WRITE_GAP: Duration = Duration::from_millis(5);
 

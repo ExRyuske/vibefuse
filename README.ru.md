@@ -21,9 +21,17 @@
   вместе с MiniFuse Control Center). Положите `.exe` в папку, где он будет лежать, и
   запустите. Программа не подписана, поэтому в первый раз Windows спросит: «Подробнее» →
   «Выполнить в любом случае».
-- **Linux.** Распакуйте архив и запустите `./install.sh`. Он установит VibeFuse для вашего
-  пользователя и добавит правило udev, поэтому один раз спросит `sudo`. Удаление —
-  `./install.sh --remove`.
+- **Fedora** и другие Linux с RPM: `sudo dnf install ./VibeFuse-<версия>-linux-x86_64.rpm`.
+- **Bazzite** и другие Fedora Atomic (Silverblue, Kinoite): `.tar.gz` из пункта ниже ставится
+  без перезагрузки. Подойдёт и `.rpm`: `rpm-ostree install ./VibeFuse-<версия>-linux-x86_64.rpm`
+  и перезагрузка.
+- **Другие Linux.** Распакуйте `.tar.gz` и запустите `./install.sh`. Он установит VibeFuse
+  для вашего пользователя и добавит правило udev, поэтому один раз спросит `sudo`.
+  Удаление — `./install.sh --remove`.
+
+GNOME, рабочий стол Fedora Workstation, показывает значок в трее только с расширением
+AppIndicator (`gnome-shell-extension-appindicator`). Без него закрытие окна завершает
+VibeFuse.
 
 ## Виртуальные выходы (macOS, Linux)
 
@@ -46,8 +54,8 @@ cargo run --release
 cargo test
 ```
 
-Для Linux нужны `libfontconfig1-dev libfreetype-dev libxkbcommon-dev`, для macOS —
-Xcode Command Line Tools. Пакет для выпуска под вашу систему собирает `sh scripts/package.sh`.
+Для Linux нужны `libfontconfig1-dev libfreetype-dev libxkbcommon-dev` (в Fedora —
+`fontconfig-devel freetype-devel libxkbcommon-devel`), для macOS — Xcode Command Line Tools. Пакет для выпуска под вашу систему собирает `sh scripts/package.sh`.
 
 Чтобы выпустить версию, запустите в GitHub Actions workflow «Release» и выберите, какую
 часть версии поднять, или `none`, чтобы выпустить текущую. Он закоммитит новую версию,

@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
-use crate::desktop::{autostart, instance};
+use crate::desktop::{self, autostart, instance};
 use crate::device::demo::DemoBus;
 use crate::device::protocol::{Inputs, Mix, MixControl, Param, RawState, meter as slot};
 use crate::device::sls::{self, Names, Sls, SlsControl};
@@ -106,6 +106,8 @@ pub fn run(start: Start) -> Result<(), slint::PlatformError> {
     } else {
         None
     };
+    // Before the device thread starts: it reports through the event loop,
+    // which only exists once there is a backend.
     select_backend(start == Start::Tray)?;
 
     // Slint draws on the GPU (Skia on Metal on macOS, FemtoVG on OpenGL
@@ -153,7 +155,7 @@ pub fn run(start: Start) -> Result<(), slint::PlatformError> {
         with(|c| {
             if !c.heard_from_worker {
                 c.status = STATUS_UNAVAILABLE;
-                c.status_text = virtual_devices::unresponsive();
+                c.status_text = device::unresponsive();
                 c.push();
             }
         });
@@ -172,7 +174,10 @@ pub fn run(start: Start) -> Result<(), slint::PlatformError> {
         with(Controller::flush);
         let _ = slint::quit_event_loop();
     });
-    with(|c| c.tray = Some(tray.clone_strong()));
+    with(|c| {
+        c.tray = Some(tray.clone_strong());
+        c.has_tray = desktop::has_tray();
+    });
     if start != Start::Tray {
         show_window();
     }
@@ -209,7 +214,7 @@ fn select_backend(hidden: bool) -> Result<(), slint::PlatformError> {
 
 #[cfg(not(target_os = "macos"))]
 fn select_backend(_hidden: bool) -> Result<(), slint::PlatformError> {
-    Ok(())
+    slint::BackendSelector::new().select()
 }
 
 /// Opens the window, or brings it to the front.
@@ -248,6 +253,12 @@ fn hide_window() {
 /// The window was closed: the app goes on in the tray, and the window is
 /// dropped once Slint is done closing it.
 fn close_window() {
+    // Nothing would bring the window back: quit instead.
+    if with(|c| !c.has_tray).unwrap_or(false) {
+        with(Controller::flush);
+        let _ = slint::quit_event_loop();
+        return;
+    }
     if let Some(Some(app)) = with(Controller::detach) {
         Timer::single_shot(Duration::ZERO, move || drop(app));
     }
@@ -564,10 +575,19 @@ fn meter_display(db: f32) -> f32 {
     (db.max(FLOOR_DB) * 2.0).round() / 2.0
 }
 
+/// What a source's meter shows: the driver measures it before the mixer, the
+/// meter is after the fader of the selected mix, as in OBS. A channel then
+/// never shows louder than its knob.
+fn after_fader(db: f32, source: &sls::Source) -> f32 {
+    meter_display(db + source.level_db)
+}
+
 struct Controller {
     /// The window, while it is open.
     app: Option<App>,
     tray: Option<Tray>,
+    /// The desktop shows the tray icon.
+    has_tray: bool,
     commands: Sender<Command>,
     demo: bool,
     settings: Settings,
@@ -676,6 +696,7 @@ impl Controller {
         Self {
             app: None,
             tray: None,
+            has_tray: true,
             commands,
             demo,
             settings: Settings::load(),
@@ -1251,8 +1272,8 @@ impl Controller {
                 stereo,
                 mono: stereo && source.mono,
                 muted: source.muted,
-                meter_left: meter_display(left),
-                meter_right: meter_display(right),
+                meter_left: after_fader(left, source),
+                meter_right: after_fader(right, source),
             }
         });
         for (i, row) in rows.enumerate() {
@@ -1274,11 +1295,13 @@ impl Controller {
         let [left, right] = self.sls_meters.mixes[self.mix_tab];
         app.set_mix_meter_left(meter_display(left));
         app.set_mix_meter_right(meter_display(right));
+        let mix = &self.sls.mixes[self.mix_tab];
         for (i, [left, right]) in self.sls_meters.sources.into_iter().enumerate() {
             let Some(mut row) = self.sources.row_data(i) else {
                 continue;
             };
-            let (left, right) = (meter_display(left), meter_display(right));
+            let source = &mix.sources[i];
+            let (left, right) = (after_fader(left, source), after_fader(right, source));
             if row.meter_left != left || row.meter_right != right {
                 row.meter_left = left;
                 row.meter_right = right;
@@ -1737,6 +1760,17 @@ mod tests {
             Some("-30.0")
         );
         assert_eq!(app.get_mix_meter_left(), -6.0);
+        // The meters are after the fader.
+        control(&app, "Virtual 7/8, dB")
+            .unwrap()
+            .set_accessible_value("-10");
+        assert_eq!(
+            control(&app, "Virtual 7/8 R")
+                .unwrap()
+                .accessible_value()
+                .as_deref(),
+            Some("-40.0")
+        );
     }
 
     #[test]

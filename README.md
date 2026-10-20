@@ -22,8 +22,17 @@ Download the latest version from the Releases page.
 - **Windows 10 or 11.** Install Arturia's MiniFuse Audio Driver first (it comes with
   MiniFuse Control Center). Put the `.exe` in a folder where it will stay and run it. The
   program is not signed, so Windows asks the first time: More info → Run anyway.
-- **Linux.** Unpack the archive and run `./install.sh`. It installs VibeFuse for your user
-  and adds a udev rule, so it asks for `sudo` once. `./install.sh --remove` uninstalls.
+- **Fedora** and other RPM-based Linux: `sudo dnf install ./VibeFuse-<version>-linux-x86_64.rpm`.
+- **Bazzite** and other Fedora Atomic systems (Silverblue, Kinoite): the `.tar.gz` below
+  needs no reboot. The `.rpm` works too, with `rpm-ostree install ./VibeFuse-<version>-linux-x86_64.rpm`
+  and a restart.
+- **Other Linux.** Unpack the `.tar.gz` and run `./install.sh`. It installs VibeFuse for
+  your user and adds a udev rule, so it asks for `sudo` once. `./install.sh --remove`
+  uninstalls.
+
+GNOME, the desktop of Fedora Workstation, shows the tray icon only with the AppIndicator
+extension (`gnome-shell-extension-appindicator`). Without it, closing the window quits
+VibeFuse.
 
 ## Virtual outputs (macOS, Linux)
 
@@ -46,8 +55,9 @@ cargo run --release
 cargo test
 ```
 
-Linux needs `libfontconfig1-dev libfreetype-dev libxkbcommon-dev`; macOS needs the Xcode
-Command Line Tools. `sh scripts/package.sh` builds the release package for your system.
+Linux needs `libfontconfig1-dev libfreetype-dev libxkbcommon-dev` (on Fedora
+`fontconfig-devel freetype-devel libxkbcommon-devel`); macOS needs the Xcode Command Line
+Tools. `sh scripts/package.sh` builds the release package for your system.
 
 To publish a release, run the Release workflow in GitHub Actions and pick which part of
 the version to raise, or `none` to release the current one. It commits the new version,

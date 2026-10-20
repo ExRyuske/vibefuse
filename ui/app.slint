@@ -56,11 +56,14 @@ export global Theme {
     out property <color> text: dark ? #ececee : #1d1d1f;
     out property <color> muted: dark ? #98989d : #6e6e73;
     out property <color> accent: accent-index < accents.length ? accents[accent-index] : custom-accent;
-    out property <color> knob: dark ? #f4f4f5 : #ffffff;
-    out property <color> knob-border: dark ? #f4f4f5 : #c7c7cc;
+    // The handles: of the faders, the pan and the switches.
+    out property <color> thumb: dark ? #45454a : #ffffff;
+    out property <color> thumb-border: dark ? #55555b : #c7c7cc;
     out property <color> green: dark ? #30d158 : #28b44c;
     out property <color> amber: dark ? #ffb340 : #f59e0b;
     out property <color> red: dark ? #ff453a : #e5372c;
+    // How much of its color an unlit meter section keeps.
+    out property <float> unlit: dark ? 0.3 : 0.32;
 }
 
 component Card inherits Rectangle {
@@ -127,7 +130,7 @@ component Toggle inherits Rectangle {
     callback clicked;
 
     min-width: max(44px, caption.preferred-width + 24px);
-    height: 30px;
+    height: 28px;
     accessible-role: button;
     accessible-label: root.label;
     accessible-checkable: true;
@@ -142,7 +145,7 @@ component Toggle inherits Rectangle {
 
     caption := Text {
         text: root.text;
-        color: root.on ? Theme.on-accent : Theme.text;
+        color: !root.on ? Theme.text : root.tint == Theme.accent ? Theme.on-accent : #ffffff;
         font-size: 12px;
         font-weight: 600;
         horizontal-alignment: center;
@@ -173,7 +176,9 @@ component Switch inherits Rectangle {
     width: 36px;
     height: 20px;
     border-radius: 10px;
-    background: root.on ? Theme.accent : Theme.hover;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.accent : Theme.track;
 
     Rectangle {
         width: 16px;
@@ -181,9 +186,9 @@ component Switch inherits Rectangle {
         border-radius: 8px;
         x: root.on ? root.width - self.width - 2px : 2px;
         y: 2px;
-        background: #ffffff;
-        drop-shadow-blur: 2px;
-        drop-shadow-color: #00000040;
+        border-width: 1px;
+        border-color: Theme.thumb-border;
+        background: Theme.thumb;
     }
 
     TouchArea {
@@ -194,12 +199,18 @@ component Switch inherits Rectangle {
     }
 }
 
-// One bar of a peak meter, -60..0 dBFS: green, amber in the top 6 dB.
+// One bar of a peak meter, `bottom`..0 dBFS, in the sections OBS uses:
+// green up to -20 dB, yellow up to -9 dB, red above. Unlit sections show
+// dimly, so the scale is there in silence too.
 component Bar inherits Rectangle {
     in property <float> level: -120;
     in property <string> label;
-    property <float> fraction: clamp((root.level + 60) / 60, 0, 1);
-    property <float> green: clamp((min(root.level, -6) + 60) / 60, 0, 1);
+    // -60 dB unless the fader around it goes lower.
+    in property <float> bottom: -60;
+    property <float> fraction: clamp((root.level - root.bottom) / -root.bottom, 0, 1);
+    // Where the yellow and the red sections start, from the bottom.
+    property <float> warning: (-20 - root.bottom) / -root.bottom;
+    property <float> error: (-9 - root.bottom) / -root.bottom;
 
     border-radius: 2px;
     clip: true;
@@ -208,59 +219,114 @@ component Bar inherits Rectangle {
     accessible-value: root.level.to-fixed(1);
 
     Rectangle {
-        y: root.height * (1 - root.green);
-        height: root.height * root.green;
+        y: root.height * (1 - root.warning);
+        height: root.height * root.warning;
+        background: Theme.green.mix(Theme.track, Theme.unlit);
+    }
+
+    Rectangle {
+        y: root.height * (1 - root.error);
+        height: root.height * (root.error - root.warning);
+        background: Theme.amber.mix(Theme.track, Theme.unlit);
+    }
+
+    Rectangle {
+        y: 0;
+        height: root.height * (1 - root.error);
+        background: Theme.red.mix(Theme.track, Theme.unlit);
+    }
+
+    Rectangle {
+        y: root.height * (1 - min(root.fraction, root.warning));
+        height: root.height * min(root.fraction, root.warning);
         background: Theme.green;
     }
 
     Rectangle {
-        y: root.height * (1 - root.fraction);
-        height: root.height * max(0, root.fraction - root.green);
+        y: root.height * (1 - min(root.fraction, root.error));
+        height: root.height * max(0, min(root.fraction, root.error) - root.warning);
         background: Theme.amber;
+    }
+
+    Rectangle {
+        y: root.height * (1 - root.fraction);
+        height: root.height * max(0, root.fraction - root.error);
+        background: Theme.red;
     }
 }
 
-// The peak meter of the input, without a fader.
+// dB marks every 10 dB down a vertical scale from `maximum` at the top to
+// `minimum` at the bottom, aligned to the right.
+component Scale inherits Rectangle {
+    in property <float> minimum: -60;
+    in property <float> maximum: 0;
+    property <float> top: floor(root.maximum / 10) * 10;
+
+    for i in floor((root.top - root.minimum) / 10) + 1: Text {
+        property <float> db: root.top - i * 10;
+        y: root.height * (root.maximum - self.db) / (root.maximum - root.minimum) - self.height / 2;
+        width: root.width;
+        height: 12px;
+        text: self.db > 0 ? "+" + self.db.to-fixed(0) : self.db.to-fixed(0);
+        color: Theme.muted;
+        font-size: 9px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+}
+
+// The peak meter of the input, without a fader, scaled like the faders.
 component Meter inherits Rectangle {
     in property <float> level: -120;
     in property <string> label;
 
-    width: 14px;
-    border-radius: 4px;
-    background: Theme.track;
+    width: 66px;
+
+    Scale {
+        x: 0;
+        width: root.width / 2 - 16px;
+    }
 
     Bar {
-        x: 3px;
-        y: 3px;
-        width: parent.width - 6px;
-        height: parent.height - 6px;
+        x: (root.width - self.width) / 2;
+        width: 8px;
         label: root.label;
         level: root.level;
     }
 }
 
-// A level in whole dB; a dash for silence.
-component Readout inherits Text {
-    in property <float> level: -120;
-    property <float> whole: round(root.level);
+// The handle of the faders and the pan: a thin bar across the track in the
+// color of the controls, with the accent along its middle.
+component Cap inherits Rectangle {
+    in property <bool> dimmed;
+    in property <bool> focused;
 
-    text: root.level <= -59.5 ? "—" : (abs(self.whole) < 0.5 ? "0" : self.whole.to-fixed(0));
-    color: Theme.muted;
-    font-size: 11px;
-    horizontal-alignment: center;
-    accessible-role: none;
+    border-radius: min(root.width, root.height) / 2;
+    border-width: root.focused ? 2px : 1px;
+    border-color: root.focused ? Theme.accent : Theme.thumb-border;
+    background: Theme.thumb;
+
+    Rectangle {
+        x: 2px;
+        y: 2px;
+        width: root.width - 4px;
+        height: root.height - 4px;
+        border-radius: min(self.width, self.height) / 2;
+        background: root.dimmed ? Theme.muted : Theme.accent;
+    }
 }
 
-// Vertical fader in dB whose track is also the channel's meter: the bars
-// show the level coming in, the knob sets how much of it goes on. Drag,
-// scroll, or double-click to reset.
+// Vertical fader in dB whose track is the channel's meter, after the fader
+// as in OBS. Without a meter it is a thin track like the pan's. A dB scale on
+// the left. Drag, scroll, or double-click to reset.
 component Fader inherits Rectangle {
     in property <float> value;
     in property <float> minimum: -60;
     in property <float> maximum: 0;
     in property <float> reset-value: 0;
     in property <string> label;
-    // Muted channels show a grey knob.
+    // Muted channels show a grey cap.
     in property <bool> dimmed;
     // 0 none, 1 mono, 2 stereo
     in property <int> meters;
@@ -268,7 +334,7 @@ component Fader inherits Rectangle {
     in property <float> meter-right: -120;
     callback changed(float);
 
-    width: 44px;
+    width: 66px;
     accessible-role: slider;
     accessible-label: root.label;
     accessible-value: root.value.to-fixed(1);
@@ -284,12 +350,13 @@ component Fader inherits Rectangle {
     accessible-action-decrement => {
         root.set(root.value - 0.5);
     }
-    // Half the knob: the knob's middle reaches both ends of the track.
-    property <length> inset: 7px;
+    // Half the cap: its middle reaches both ends of the track.
+    property <length> inset: 4px;
     property <length> travel: root.height - 2 * root.inset;
     property <float> fraction: (root.value - root.minimum) / (root.maximum - root.minimum);
     property <length> knob-y: root.inset + root.travel * (1 - root.fraction);
     property <color> tint: root.dimmed ? Theme.muted : Theme.accent;
+    property <length> centre: root.width / 2;
 
     function set(v: float) {
         root.changed(clamp(round(v * 10) / 10, root.minimum, root.maximum));
@@ -318,73 +385,62 @@ component Fader inherits Rectangle {
         }
     }
 
-    track := Rectangle {
-        x: (root.width - self.width) / 2;
+    property <length> track-width: root.meters == 2 ? 14px : root.meters == 1 ? 8px : 4px;
+
+    Scale {
+        x: 0;
         y: root.inset;
-        width: root.meters == 2 ? 18px : root.meters == 1 ? 14px : 6px;
+        width: root.centre - 16px;
         height: root.travel;
-        border-radius: root.meters > 0 ? 4px : 3px;
+        minimum: root.minimum;
+        maximum: root.maximum;
+    }
+
+    if root.meters == 0: Rectangle {
+        x: root.centre - self.width / 2;
+        y: root.inset;
+        width: root.track-width;
+        height: root.travel;
+        border-radius: 2px;
         background: Theme.track;
-        clip: true;
-
-        // The part below the knob.
-        Rectangle {
-            y: root.knob-y - root.inset;
-            height: parent.height - self.y;
-            background: root.meters == 0 ? root.tint : root.tint.with-alpha(root.dimmed ? 0.18 : 0.3);
-        }
-
-        if root.meters >= 1: Bar {
-            opacity: root.dimmed ? 0.4 : 1;
-            x: 3px;
-            y: 3px;
-            width: root.meters == 2 ? (parent.width - 8px) / 2 : parent.width - 6px;
-            height: parent.height - 6px;
-            label: root.label + (root.meters == 2 ? " L" : "");
-            level: root.meter-left;
-        }
-
-        if root.meters == 2: Bar {
-            opacity: root.dimmed ? 0.4 : 1;
-            x: parent.width / 2 + 1px;
-            y: 3px;
-            width: (parent.width - 8px) / 2;
-            height: parent.height - 6px;
-            label: root.label + " R";
-            level: root.meter-right;
-        }
     }
 
-    // 0 dB, when the fader goes past it.
-    if root.maximum > 0: Rectangle {
-        x: track.x - 6px;
-        y: root.inset + root.travel * root.maximum / (root.maximum - root.minimum);
-        width: track.width + 12px;
-        height: 1px;
-        background: Theme.muted;
+    if root.meters == 0: Rectangle {
+        x: root.centre - self.width / 2;
+        y: root.knob-y;
+        width: root.track-width;
+        height: root.inset + root.travel - self.y;
+        border-radius: 2px;
+        background: root.tint;
     }
 
-    Rectangle {
-        x: (root.width - self.width) / 2;
+    if root.meters >= 1: Bar {
+        x: root.centre - root.track-width / 2;
+        y: root.inset;
+        width: root.meters == 2 ? (root.track-width - 2px) / 2 : root.track-width;
+        height: root.travel;
+        label: root.label + (root.meters == 2 ? " L" : "");
+        bottom: root.minimum;
+        level: root.meter-left;
+    }
+
+    if root.meters == 2: Bar {
+        x: root.centre + 1px;
+        y: root.inset;
+        width: (root.track-width - 2px) / 2;
+        height: root.travel;
+        label: root.label + " R";
+        bottom: root.minimum;
+        level: root.meter-right;
+    }
+
+    Cap {
+        x: root.centre - self.width / 2;
         y: root.knob-y - self.height / 2;
-        width: 34px;
-        height: 14px;
-        border-radius: 4px;
-        border-width: focus.has-focus ? 2px : 1px;
-        border-color: focus.has-focus ? Theme.accent : Theme.knob-border;
-        background: Theme.knob;
-        drop-shadow-blur: 3px;
-        drop-shadow-offset-y: 1px;
-        drop-shadow-color: #00000050;
-
-        Rectangle {
-            x: 5px;
-            y: (parent.height - self.height) / 2;
-            width: parent.width - 10px;
-            height: 2px;
-            border-radius: 1px;
-            background: root.tint;
-        }
+        width: root.track-width + 12px;
+        height: 2 * root.inset;
+        dimmed: root.dimmed;
+        focused: focus.has-focus;
     }
 
     touch := TouchArea {
@@ -437,7 +493,7 @@ component Pan inherits Rectangle {
         root.set(v.to-float());
     }
 
-    property <length> knob: 12px;
+    property <length> knob: 8px;
     property <length> travel: root.width - root.knob;
     property <length> centre: root.knob / 2 + root.travel / 2;
     property <length> at: root.knob / 2 + root.travel * root.value;
@@ -468,7 +524,7 @@ component Pan inherits Rectangle {
         background: Theme.track;
     }
 
-    // From the middle to the knob.
+    // From the middle to the cap.
     Rectangle {
         x: min(root.centre, root.at);
         y: (root.height - self.height) / 2;
@@ -485,17 +541,12 @@ component Pan inherits Rectangle {
         background: Theme.muted;
     }
 
-    Rectangle {
+    Cap {
         x: root.at - self.width / 2;
-        y: (root.height - self.height) / 2;
         width: root.knob;
-        height: root.knob;
-        border-radius: root.knob / 2;
-        border-width: focus.has-focus ? 2px : 1px;
-        border-color: focus.has-focus ? Theme.accent : Theme.knob-border;
-        background: Theme.knob;
-        drop-shadow-blur: 2px;
-        drop-shadow-color: #00000040;
+        height: root.height;
+        dimmed: root.dimmed;
+        focused: focus.has-focus;
     }
 
     touch := TouchArea {
@@ -525,7 +576,7 @@ component MonoButton inherits Rectangle {
     callback clicked;
 
     width: 32px;
-    height: 26px;
+    height: 28px;
     border-radius: 7px;
     border-width: root.on ? 0px : 1px;
     border-color: Theme.border;
@@ -555,18 +606,19 @@ component MonoButton inherits Rectangle {
     }
 }
 
-// Mutes a channel: a speaker, crossed out in red while muted.
+// Mutes a channel: a speaker, crossed out in red while muted. The button
+// itself stays plain, so muted channels draw no attention.
 component MuteButton inherits Rectangle {
     in property <bool> muted;
     in property <string> label;
     callback clicked;
 
     width: 32px;
-    height: 26px;
+    height: 28px;
     border-radius: 7px;
     border-width: 1px;
-    border-color: root.muted ? Theme.red.with-alpha(0.5) : Theme.border;
-    background: root.muted ? Theme.red.with-alpha(touch.has-hover ? 0.28 : 0.18) : (touch.has-hover ? Theme.hover : Theme.control);
+    border-color: Theme.border;
+    background: touch.has-hover ? Theme.hover : Theme.control;
     accessible-role: button;
     accessible-label: root.label;
     accessible-checkable: true;
@@ -633,7 +685,7 @@ component ValueBox inherits Rectangle {
     // No "-0.0"; the decimal separator follows the language.
     property <string> shown: (abs(root.value) < 0.05 ? 0 : root.value).to-fixed(1);
 
-    width: 52px;
+    width: 62px;
     height: 22px;
     border-radius: 5px;
     border-width: 1px;
@@ -663,7 +715,7 @@ component ValueBox inherits Rectangle {
     }
 
     if !root.editing: Text {
-        text: root.shown;
+        text: root.shown + " dB";
         color: Theme.text;
         font-size: 12px;
         font-weight: 500;
@@ -681,7 +733,7 @@ component ValueBox inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
         selection-background-color: Theme.accent;
-        selection-foreground-color: #ffffff;
+        selection-foreground-color: Theme.on-accent;
         accepted => {
             root.commit(self.text);
         }
@@ -764,7 +816,7 @@ component NameBox inherits Rectangle {
         vertical-alignment: center;
         single-line: true;
         selection-background-color: Theme.accent;
-        selection-foreground-color: #ffffff;
+        selection-foreground-color: Theme.on-accent;
         accepted => {
             root.editing = false;
             root.renamed(self.text);
@@ -796,7 +848,7 @@ component NameBox inherits Rectangle {
 }
 
 // One channel of a mixer, top to bottom: name, gain, the fader with its
-// meter, the level, pan and mute. Every part has a fixed height, so strips
+// meter, pan, mono and mute. Every part has a fixed height, so strips
 // without some of them still line up.
 component Strip inherits VerticalLayout {
     in property <Label> label;
@@ -826,8 +878,11 @@ component Strip inherits VerticalLayout {
 
     spacing: 4px;
     width: 70px;
+    // A muted channel fades, all but its mute button.
+    property <float> presence: root.muted ? 0.35 : 1;
 
     if root.renamable: NameBox {
+        opacity: root.presence;
         label: root.label;
         renamed(text) => {
             root.renamed(text);
@@ -847,6 +902,7 @@ component Strip inherits VerticalLayout {
     HorizontalLayout {
         alignment: center;
         ValueBox {
+            opacity: root.presence;
             label: root.name;
             value: root.level;
             minimum: root.minimum;
@@ -860,7 +916,8 @@ component Strip inherits VerticalLayout {
     HorizontalLayout {
         alignment: center;
         Fader {
-            height: 190px;
+            opacity: root.presence;
+            height: 208px;
             label: root.name;
             dimmed: root.muted;
             value: root.level;
@@ -875,12 +932,6 @@ component Strip inherits VerticalLayout {
         }
     }
 
-    Readout {
-        height: 14px;
-        visible: root.meters > 0;
-        level: root.meters == 2 ? max(root.meter-left, root.meter-right) : root.meter-left;
-    }
-
     VerticalLayout {
         height: 32px;
         spacing: 1px;
@@ -889,6 +940,7 @@ component Strip inherits VerticalLayout {
         if root.has-pan: HorizontalLayout {
             alignment: center;
             Pan {
+                opacity: root.presence;
                 value: root.pan;
                 dimmed: root.muted;
                 label: @tr("Pan {}", root.name);
@@ -899,6 +951,7 @@ component Strip inherits VerticalLayout {
         }
 
         if root.has-pan: Text {
+            opacity: root.presence;
             text: root.pan-label;
             color: Theme.muted;
             font-size: 10px;
@@ -908,10 +961,11 @@ component Strip inherits VerticalLayout {
 
     HorizontalLayout {
         alignment: center;
-        height: 26px;
+        height: 28px;
         spacing: 2px;
 
         if root.has-mono: MonoButton {
+            opacity: root.presence;
             label: @tr("Mono {}", root.name);
             on: root.mono;
             clicked => {
@@ -940,7 +994,7 @@ component Choice inherits Rectangle {
 
     width: max(root.preferred, shown.preferred-width + 34px);
     height: 28px;
-    border-radius: 6px;
+    border-radius: 7px;
     border-width: 1px;
     border-color: Theme.border;
     background: touch.has-hover && root.enabled ? Theme.hover : Theme.control;
@@ -963,6 +1017,7 @@ component Choice inherits Rectangle {
             text: root.index >= 0 ? root.options[root.index] : "—";
             color: Theme.text;
             font-size: 12px;
+            font-weight: 500;
             vertical-alignment: center;
         }
 
@@ -998,7 +1053,7 @@ component Choice inherits Rectangle {
             background: Theme.card;
             border-color: Theme.border;
             border-width: 1px;
-            border-radius: 6px;
+            border-radius: 8px;
             drop-shadow-blur: 8px;
             drop-shadow-color: #00000030;
         }
@@ -1083,8 +1138,8 @@ component HexField inherits Rectangle {
     callback picked;
 
     width: 108px;
-    height: 30px;
-    border-radius: 15px;
+    height: 28px;
+    border-radius: 14px;
     border-width: root.selected || !root.valid ? 2px : 1px;
     border-color: !root.valid ? Theme.red : root.selected ? root.sample : input.has-focus ? Theme.accent : Theme.border;
     background: Theme.control;
@@ -1155,7 +1210,8 @@ component Tab inherits Rectangle {
     callback clicked;
 
     height: 28px;
-    min-width: caption.preferred-width + 28px;
+    // As wide as the bold caption, so selecting a tab moves none.
+    min-width: bold.preferred-width + 28px;
     border-radius: 6px;
     background: root.selected ? Theme.accent : (touch.has-hover ? Theme.hover : transparent);
     accessible-role: tab;
@@ -1166,7 +1222,14 @@ component Tab inherits Rectangle {
         root.clicked();
     }
 
-    caption := Text {
+    bold := Text {
+        visible: false;
+        text: root.text;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    Text {
         text: root.text;
         color: root.selected ? Theme.on-accent : Theme.text;
         font-size: 12px;
@@ -1620,19 +1683,17 @@ export component App inherits Window {
                         }
                     }
 
+                    // The scale's end marks reach past the bar.
                     if root.live: HorizontalLayout {
                         vertical-stretch: 1;
                         alignment: center;
+                        padding-top: 10px;
+                        padding-bottom: 14px;
                         Meter {
                             min-height: 80px;
                             label: @tr("Level {}", root.input-label.text);
                             level: root.meter-in;
                         }
-                    }
-
-                    if root.live: Readout {
-                        height: 14px;
-                        level: root.meter-in;
                     }
 
                     if !root.live: Rectangle {
@@ -1679,6 +1740,8 @@ export component App inherits Window {
                         // Segmented control.
                         Rectangle {
                             border-radius: 8px;
+                            border-width: 1px;
+                            border-color: Theme.border;
                             background: Theme.control;
 
                             HorizontalLayout {
@@ -1790,7 +1853,7 @@ export component App inherits Window {
                     }
 
                     if root.loopback: HorizontalLayout {
-                        spacing: 6px;
+                        spacing: 10px;
                         alignment: start;
 
                         Strip {

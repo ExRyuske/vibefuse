@@ -1,5 +1,5 @@
-//! How VibeFuse lives on the desktop: one copy per user, the login item and,
-//! on macOS, the Dock icon.
+//! How VibeFuse lives on the desktop: one copy per user, the login item, the
+//! tray and, on macOS, the Dock icon.
 
 pub mod instance {
     //! One VibeFuse per user. The first start holds a lock file and listens; a
@@ -378,6 +378,25 @@ pub mod autostart {
     }
 
     pub use platform::{disable, enable, is_enabled};
+}
+
+/// Whether the desktop shows tray icons. GNOME (Fedora's default) does not
+/// without the AppIndicator extension; there a closed window could never be
+/// opened again from the tray.
+pub fn has_tray() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let watcher = || -> zbus::Result<bool> {
+            let bus = zbus::blocking::Connection::session()?;
+            let dbus = zbus::blocking::fdo::DBusProxy::new(&bus)?;
+            Ok(dbus.name_has_owner("org.kde.StatusNotifierWatcher".try_into()?)?)
+        };
+        watcher().unwrap_or(false)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
 }
 
 #[cfg(target_os = "macos")]

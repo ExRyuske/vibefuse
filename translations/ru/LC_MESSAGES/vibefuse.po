@@ -252,6 +252,9 @@ msgstr "Выйти"
 msgid "MiniFuse 1 is not responding: {}"
 msgstr "MiniFuse 1 не отвечает: {}"
 
+msgid "MiniFuse 1 is not responding. Reconnect it if this lasts."
+msgstr "MiniFuse 1 не отвечает. Если это не проходит, переподключите её."
+
 msgid "The mixer is not responding: {}"
 msgstr "Микшер не отвечает: {}"
 

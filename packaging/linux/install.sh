@@ -1,5 +1,7 @@
 #!/bin/sh
 # Installs VibeFuse for the current user; the udev rule needs sudo once.
+# Nothing goes to /usr, so it also works on Fedora Atomic systems (Bazzite,
+# Silverblue, Kinoite) without a reboot.
 #   ./install.sh            install
 #   ./install.sh --remove   remove again
 set -eu
@@ -18,7 +20,8 @@ if [ "${1:-}" = "--remove" ]; then
 	rm -f "$bin/vibefuse" "$apps/vibefuse.desktop" "$icons/vibefuse.png" \
 		"$HOME/.config/autostart/vibefuse.desktop"
 	if [ -e "$rule" ]; then
-		sudo rm -f "$rule" && sudo udevadm control --reload-rules
+		sudo rm -f "$rule"
+		sudo udevadm control --reload-rules || true
 	fi
 	echo "VibeFuse removed. Settings stay in ~/.config/vibefuse."
 	exit 0
@@ -26,12 +29,16 @@ fi
 
 mkdir -p "$bin" "$apps" "$icons"
 install -m 755 vibefuse "$bin/vibefuse"
-install -m 644 vibefuse.desktop "$apps/vibefuse.desktop"
+# The menu entry names the program by its path: the desktop session may not
+# have ~/.local/bin in its PATH (KDE on Bazzite, for one).
+sed "s|^Exec=vibefuse\$|Exec=\"$bin/vibefuse\"|" vibefuse.desktop >"$apps/vibefuse.desktop"
+chmod 644 "$apps/vibefuse.desktop"
 install -m 644 vibefuse.png "$icons/vibefuse.png"
 if [ ! -e "$rule" ]; then
 	echo "Access to the MiniFuse without root needs a udev rule (sudo):"
 	sudo install -m 644 70-vibefuse.rules "$rule"
-	sudo udevadm control --reload-rules
-	sudo udevadm trigger --subsystem-match=usb
+	# Without these the rule applies once the MiniFuse is plugged in again.
+	sudo udevadm control --reload-rules || true
+	sudo udevadm trigger --subsystem-match=usb || true
 fi
 echo "VibeFuse installed: start it from the applications menu or run 'vibefuse'."

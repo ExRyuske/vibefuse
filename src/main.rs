@@ -79,7 +79,7 @@ fn dump() -> Result<(), String> {
     // The audio server answers most of this; a hung one must not hang here.
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(30));
-        eprintln!("{}", virtual_devices::unresponsive());
+        eprintln!("{}", device::unresponsive());
         std::process::exit(1);
     });
     let mut bus = device::system_bus();

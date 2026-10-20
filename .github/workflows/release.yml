@@ -83,9 +83,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: v${{ needs.version.outputs.version }}
+      # rpm builds the Fedora package.
       - name: Linux libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libfreetype-dev libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libfreetype-dev libxkbcommon-dev rpm
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.targets }}
@@ -100,6 +101,7 @@ jobs:
             target/dist/VibeFuse-*.dmg
             target/dist/VibeFuse-*.exe
             target/dist/VibeFuse-*.tar.gz
+            target/dist/VibeFuse-*.rpm
             target/dist/THIRD-PARTY-NOTICES.txt
           if-no-files-found: error
 

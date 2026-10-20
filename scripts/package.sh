@@ -7,8 +7,10 @@
 #   Windows  VibeFuse-<version>-windows-x64.exe, the program itself, and
 #            THIRD-PARTY-NOTICES.txt beside it; in Git Bash. Elsewhere
 #            `sh scripts/package.sh windows` cross-builds with mingw-w64.
-#   Linux    VibeFuse-<version>-linux-<arch>.tar.gz. Needs build-essential
-#            pkg-config libfontconfig1-dev libfreetype-dev libxkbcommon-dev.
+#   Linux    VibeFuse-<version>-linux-<arch>.tar.gz and, where rpmbuild is
+#            installed, the .rpm for Fedora. Needs build-essential pkg-config
+#            libfontconfig1-dev libfreetype-dev libxkbcommon-dev (on Fedora gcc
+#            fontconfig-devel freetype-devel libxkbcommon-devel).
 # The packages carry THIRD-PARTY-NOTICES.txt, which takes Python 3.
 set -eu
 
@@ -169,8 +171,16 @@ linux() {
 	cp assets/icon-256.png "$staging/vibefuse.png"
 	notices "$staging"
 	tar -C "$out" -czf "$out/$name.tar.gz" "$name"
-	rm -rf "$staging"
 	echo "$out/$name.tar.gz"
+	if command -v rpmbuild >/dev/null 2>&1; then
+		rpmbuild -bb --quiet --define "_topdir $here/$out/rpm" \
+			--define "_sourcedir $here/$staging" --define "version $version" \
+			packaging/linux/vibefuse.spec
+		mv "$out"/rpm/RPMS/*/vibefuse-*.rpm "$out/$name.rpm"
+		rm -rf "$out/rpm"
+		echo "$out/$name.rpm"
+	fi
+	rm -rf "$staging"
 }
 
 case "${1:-$(uname -s)}" in
