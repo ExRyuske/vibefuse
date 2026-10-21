@@ -19,10 +19,19 @@
 //! WirePlumber would connect the two streams that face the card to some
 //! other device while the card is away, so they do not connect by
 //! themselves; [`keep_links`] links them to the card whenever it appears.
+//! While the card's input is heard in "Monitor & Phones" a keeper records
+//! that mix and throws it away ([`monitor_input`]): a stream linked to
+//! another stream is not passive, so it wakes the whole path from the
+//! card's input to its outputs, also with no program playing.
+//!
+//! The device itself cannot be read without taking it from ALSA, so the
+//! level of its input comes from a recording ([`capture`]).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -36,6 +45,7 @@ const CONFIG_TAG: &str = "# vibefuse-mixer 1";
 const MIXER_NODE: &str = "vibefuse.mixer";
 const INPUT_NODE: &str = "vibefuse.input";
 const MONITOR_NODE: &str = "vibefuse.monitor";
+const KEEPER_NODE: &str = "vibefuse.keeper";
 /// Controls per `pw-cli set-param`.
 const CONTROLS_PER_CALL: usize = 16;
 /// Gains are written into the config at most this often while they move.
@@ -397,10 +407,96 @@ fn card_node(objects: &[Value], class: &str) -> Option<u64> {
         .as_u64()
 }
 
+/// The card's input is heard in "Monitor & Phones".
+static MONITOR: AtomicBool = AtomicBool::new(false);
+/// The recording that keeps "Monitor & Phones" running, see [`monitor_input`].
+static KEEPER: Mutex<Option<std::process::Child>> = Mutex::new(None);
+/// One [`link_card`] at a time: the watcher and [`monitor_input`] both run it.
+static LINKING: Mutex<()> = Mutex::new(());
+
+/// Keeps the card's input running to its outputs while it is heard in
+/// "Monitor & Phones". The mixer's links are passive, so with no program
+/// playing nothing would; a recording of the mix does.
+pub fn monitor_input(on: bool) {
+    if MONITOR.swap(on, Ordering::Relaxed) == on {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("vibefuse-links".into())
+        .spawn(|| {
+            keep();
+            // The keeper's ports appear a moment later.
+            for _ in 0..10 {
+                std::thread::sleep(Duration::from_millis(200));
+                if link_card() {
+                    break;
+                }
+            }
+        });
+}
+
+/// Starts the keeper while the input is heard (again, if it has ended),
+/// stops it otherwise.
+fn keep() {
+    let Ok(mut keeper) = KEEPER.lock() else {
+        return;
+    };
+    let wanted = MONITOR.load(Ordering::Relaxed);
+    let running = keeper
+        .as_mut()
+        .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+    if wanted == running {
+        return;
+    }
+    if let Some(mut child) = keeper.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    if wanted {
+        *keeper = start_keeper();
+    }
+}
+
+/// A recording of "Monitor & Phones" into nothing. Its output is read
+/// here, so it ends with the app.
+fn start_keeper() -> Option<std::process::Child> {
+    let mut child = Command::new("pw-record")
+        .args([
+            "--raw",
+            "--format",
+            "f32",
+            "--channels",
+            "2",
+            "--target",
+            "0",
+        ])
+        .args([
+            "-P",
+            &format!(
+                "{{ node.name = {KEEPER_NODE} node.autoconnect = false \
+                 application.name = VibeFuse media.name = \"Input 1 monitoring\" }}"
+            ),
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut output = child.stdout.take()?;
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut output, &mut std::io::sink());
+    });
+    Some(child)
+}
+
 /// Links the mixer to the card: its first input to "Input 1", "Monitor &
-/// Phones" to its first two outputs. Missing links only.
-pub fn link_card() {
-    let Some(objects) = dump() else { return };
+/// Phones" to its first two outputs, and to the keeper while there is one.
+/// Missing links only. Returns whether the keeper is linked or not needed.
+pub fn link_card() -> bool {
+    let _linking = LINKING.lock();
+    keep();
+    let Some(objects) = dump() else { return false };
     let mut wanted = Vec::new();
     if let (Some(card), Some(input)) = (
         card_node(&objects, "Audio/Source"),
@@ -413,16 +509,25 @@ pub fn link_card() {
                 .take(1),
         );
     }
-    if let (Some(card), Some(monitor)) = (
-        card_node(&objects, "Audio/Sink"),
-        node_id(&objects, MONITOR_NODE),
-    ) {
+    let monitor = node_id(&objects, MONITOR_NODE);
+    if let (Some(card), Some(monitor)) = (card_node(&objects, "Audio/Sink"), monitor) {
         wanted.extend(
             ports(&objects, monitor, "out")
                 .into_iter()
                 .zip(ports(&objects, card, "in"))
                 .take(2),
         );
+    }
+    let keeper = MONITOR.load(Ordering::Relaxed);
+    let mut keeper_linked = !keeper;
+    if keeper && let (Some(monitor), Some(node)) = (monitor, node_id(&objects, KEEPER_NODE)) {
+        let pairs: Vec<_> = ports(&objects, monitor, "out")
+            .into_iter()
+            .zip(ports(&objects, node, "in"))
+            .take(2)
+            .collect();
+        keeper_linked = !pairs.is_empty();
+        wanted.extend(pairs);
     }
     let linked = |from: u64, to: u64| {
         objects.iter().any(|o| {
@@ -436,6 +541,7 @@ pub fn link_card() {
             let _ = run("pw-link", &[&from.to_string(), &to.to_string()]);
         }
     }
+    keeper_linked
 }
 
 /// Keeps the card linked: watches ports come and go (`pw-link -m`) and
@@ -562,6 +668,152 @@ pub fn remove() -> std::result::Result<(), String> {
     }
     let _ = run("systemctl", &["--user", "daemon-reload"]);
     Ok(())
+}
+
+/// The card's capture node: its name and number of channels.
+fn card_source(objects: &[Value]) -> Option<(String, usize)> {
+    let id = card_node(objects, "Audio/Source")?;
+    let node = objects
+        .iter()
+        .find(|o| o.get("id").and_then(Value::as_u64) == Some(id))?;
+    let name = prop(node, "node.name")?.to_owned();
+    Some((name, ports(objects, id, "out").len().max(1)))
+}
+
+pub mod capture {
+    //! Records the card's input with `pw-record` while the meter of Input 1
+    //! reads its level.
+
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::sync::{Mutex, Once, mpsc};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use super::{card_source, dump, tool};
+
+    /// The meter keeps the recording going this long after its last read.
+    const METER_PATIENCE: Duration = Duration::from_secs(2);
+    /// No audio for this long: the card went away or ALSA re-created it.
+    const STALL: Duration = Duration::from_secs(1);
+    /// Pause before looking for the card again.
+    const RETRY: Duration = Duration::from_secs(1);
+
+    /// When the meter last asked.
+    static READ_AT: Mutex<Option<Instant>> = Mutex::new(None);
+    /// The loudest sample of Input 1 since the meter last asked; `None`
+    /// while nothing is recorded.
+    static PEAK: Mutex<Option<f32>> = Mutex::new(None);
+    static START: Once = Once::new();
+
+    /// Whether the level can be recorded here.
+    pub fn available() -> bool {
+        tool("pw-record").is_some()
+    }
+
+    /// The peak of Input 1 (0..=1) since the last call, once recording.
+    pub fn take_peak() -> Option<f32> {
+        if let Ok(mut at) = READ_AT.lock() {
+            *at = Some(Instant::now());
+        }
+        start();
+        PEAK.lock().ok()?.as_mut().map(std::mem::take)
+    }
+
+    fn wanted() -> bool {
+        READ_AT
+            .lock()
+            .is_ok_and(|at| at.is_some_and(|at| at.elapsed() < METER_PATIENCE))
+    }
+
+    fn set_peak(peak: Option<f32>) {
+        if let Ok(mut current) = PEAK.lock() {
+            *current = match (*current, peak) {
+                (Some(old), Some(new)) => Some(old.max(new)),
+                (_, new) => new,
+            };
+        }
+    }
+
+    fn start() {
+        START.call_once(|| {
+            let _ = thread::Builder::new()
+                .name("vibefuse-capture".into())
+                .spawn(|| {
+                    loop {
+                        if wanted() {
+                            record();
+                            set_peak(None);
+                            thread::sleep(RETRY);
+                        } else {
+                            thread::sleep(Duration::from_millis(200));
+                        }
+                    }
+                });
+        });
+    }
+
+    /// The loudest sample of the first channel in whole frames of 32-bit
+    /// floats; what is left of a frame stays in `pending`.
+    pub(super) fn peak(pending: &mut Vec<u8>, channels: usize) -> f32 {
+        let frame = 4 * channels;
+        let whole = pending.len() / frame * frame;
+        let peak = pending[..whole]
+            .chunks_exact(frame)
+            .map(|f| f32::from_le_bytes([f[0], f[1], f[2], f[3]]).abs())
+            .fold(0.0, f32::max);
+        pending.drain(..whole);
+        peak
+    }
+
+    /// Records until nobody needs it or the audio stops.
+    fn record() {
+        let Some((target, channels)) = dump().as_deref().and_then(card_source) else {
+            return;
+        };
+        // One sample per channel as the card has them: channel 1 is Input 1.
+        // It does not follow the card elsewhere when it disappears.
+        let Ok(mut child) = Command::new("pw-record")
+            .args(["--raw", "--format", "f32", "--latency", "20ms"])
+            .args(["--channels", &channels.to_string(), "--target", &target])
+            .args([
+                "-P",
+                "{ stream.dont-remix = true node.dont-reconnect = true \
+                 application.name = VibeFuse media.name = \"Input 1 level\" }",
+                "-",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            return;
+        };
+        let Some(mut stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        };
+        let (sender, chunks) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buffer = vec![0; 16384];
+            while let Ok(n @ 1..) = stdout.read(&mut buffer) {
+                if sender.send(buffer[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut pending = Vec::new();
+        while wanted() {
+            let Ok(chunk) = chunks.recv_timeout(STALL) else {
+                break;
+            };
+            pending.extend(chunk);
+            set_peak(Some(peak(&mut pending, channels)));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 /// The running mixer, if the service is up.
@@ -943,6 +1195,108 @@ mod tests {
             (peak[0] - 0.5).abs() < 0.02 && (peak[1] - 0.25).abs() < 0.02,
             "{peak:?}"
         );
+    }
+
+    #[test]
+    fn the_level_is_the_first_channel_of_whole_frames() {
+        let mut pending: Vec<u8> = [0.25f32, -0.9, -0.5, 0.1, 0.75]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        // Two whole frames of two channels; the fifth sample waits.
+        assert_eq!(capture::peak(&mut pending, 2), 0.5);
+        assert_eq!(pending.len(), 4);
+        pending.extend(0.0f32.to_le_bytes());
+        assert_eq!(capture::peak(&mut pending, 2), 0.75);
+        assert!(pending.is_empty());
+    }
+
+    /// The states of nodes by name ("running", "idle", "suspended").
+    fn states(names: &[&str]) -> Vec<String> {
+        let objects = dump().unwrap();
+        names
+            .iter()
+            .map(|&name| {
+                objects
+                    .iter()
+                    .find(|o| is_type(o, "Node") && prop(o, "node.name") == Some(name))
+                    .and_then(|o| o.pointer("/info/state"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("missing")
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    /// With nothing playing, the path from the card's input to its outputs
+    /// runs while the input is heard in "Monitor & Phones", and only then.
+    /// The fake card's nodes are drivers like ALSA's.
+    #[test]
+    #[ignore]
+    fn live_input_monitoring() {
+        let card_out = "alsa_output.usb-ARTURIA_MiniFuse_1_TEST-00.analog-stereo";
+        let card_in = "alsa_input.usb-ARTURIA_MiniFuse_1_TEST-00.analog-stereo";
+        for (name, class) in [(card_out, "Audio/Sink"), (card_in, "Audio/Source")] {
+            run("pw-cli", &["create-node", "adapter", &format!(
+                "{{ factory.name=support.null-audio-sink node.name={name} media.class={class} audio.position=[FL FR] object.linger=true }}"
+            )]).unwrap();
+        }
+        let mut children = Children(Vec::new());
+        std::fs::write("/tmp/vibefuse-mixer.conf", config(&Matrix::default())).unwrap();
+        children.0.push(quiet(
+            Command::new("pipewire").args(["-c", "/tmp/vibefuse-mixer.conf"]),
+        ));
+        wait_for_mixer().expect("the mixer node");
+        std::thread::sleep(Duration::from_millis(500));
+        let path = [
+            INPUT_NODE,
+            "vibefuse.input.out",
+            MIXER_NODE,
+            "vibefuse.mixer.out",
+            "vibefuse.monitor.in",
+            MONITOR_NODE,
+            card_out,
+        ];
+        let settle = || std::thread::sleep(Duration::from_millis(1500));
+        link_card();
+        settle();
+        let asleep = states(&path);
+        monitor_input(true);
+        settle();
+        let heard = states(&path);
+        monitor_input(false);
+        settle();
+        let after = states(&path);
+        eprintln!("asleep {asleep:?}\nheard {heard:?}\nafter {after:?}");
+        assert!(asleep.iter().all(|s| s != "running"), "{asleep:?}");
+        assert!(heard.iter().all(|s| s == "running"), "{heard:?}");
+        assert!(after.iter().all(|s| s != "running"), "{after:?}");
+    }
+
+    /// The meter reads the level of the card's first input channel.
+    #[test]
+    #[ignore]
+    fn live_input_level() {
+        let card_in = "alsa_input.usb-ARTURIA_MiniFuse_1_TEST-00.analog-stereo";
+        let mut children = Children(Vec::new());
+        children.0.push(quiet(
+            Command::new("pw-loopback")
+                .arg("--capture-props=media.class=Audio/Sink node.name=fake.mic audio.position=[FL FR]")
+                .arg(format!("--playback-props=media.class=Audio/Source node.name={card_in} audio.position=[FL FR]")),
+        ));
+        tone("/tmp/vibefuse-tone.wav", 0.5, 0.25);
+        std::thread::sleep(Duration::from_millis(500));
+        children.0.push(quiet(Command::new("pw-play").args([
+            "--target",
+            "fake.mic",
+            "/tmp/vibefuse-tone.wav",
+        ])));
+        assert_eq!(capture::take_peak(), None, "nothing recorded yet");
+        std::thread::sleep(Duration::from_millis(1500));
+        capture::take_peak();
+        std::thread::sleep(Duration::from_millis(300));
+        let level = capture::take_peak().expect("a level");
+        assert!((level - 0.5).abs() < 0.03, "{level}");
     }
 
     #[test]

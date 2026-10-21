@@ -359,8 +359,9 @@ impl Sls {
     }
 
     /// Whether the card's input is heard on its outputs: the "Monitor &
-    /// Phones" mix has it on. The macOS bridge must run for that.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    /// Phones" mix has it on. Something must run the card for that: the
+    /// bridge on macOS, an active link on Linux.
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn input_monitored(&self) -> bool {
         let mix = &self.mixes[0];
         let input = &mix.sources[INPUT_1];

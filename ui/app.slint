@@ -1296,6 +1296,8 @@ export component App inherits Window {
     in property <string> message;
     // Live devices report meters; Linux applies changes in batches.
     in property <bool> live: true;
+    // The input's level is known, on Linux from its audio.
+    in property <bool> input-meter: true;
     in-out property <bool> settings-open;
 
     in property <bool> inst;
@@ -1684,7 +1686,7 @@ export component App inherits Window {
                     }
 
                     // The scale's end marks reach past the bar.
-                    if root.live: HorizontalLayout {
+                    if root.input-meter: HorizontalLayout {
                         vertical-stretch: 1;
                         alignment: center;
                         padding-top: 10px;
@@ -1696,7 +1698,7 @@ export component App inherits Window {
                         }
                     }
 
-                    if !root.live: Rectangle {
+                    if !root.input-meter: Rectangle {
                         vertical-stretch: 1;
                     }
 

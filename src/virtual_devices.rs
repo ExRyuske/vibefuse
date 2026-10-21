@@ -342,12 +342,14 @@ pub mod bridge {
             });
     }
 
-    /// Keeps the bridge running while the card's input is heard in the
-    /// "Monitor & Phones" mix (macOS): with no program playing, nothing else
-    /// would carry the input to the outputs.
-    #[cfg(target_os = "macos")]
+    /// Keeps the card's input running while it is heard in the "Monitor &
+    /// Phones" mix: with no program playing, nothing else would carry it to
+    /// the outputs. macOS runs the bridge, Linux links the input actively.
     pub fn monitor_input(on: bool) {
+        #[cfg(target_os = "macos")]
         mac::monitor_input(on);
+        #[cfg(target_os = "linux")]
+        crate::device::pipewire::monitor_input(on);
     }
 
     #[cfg(target_os = "macos")]

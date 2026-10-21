@@ -595,6 +595,8 @@ struct Controller {
     status_text: String,
     device: Option<DeviceInfo>,
     live: bool,
+    /// The input's level is known, also when the device is not live.
+    input_meter: bool,
     inputs: Inputs,
     inputs_edited: Option<Instant>,
     mix: Mix,
@@ -704,6 +706,7 @@ impl Controller {
             status_text: String::new(),
             device: None,
             live: true,
+            input_meter: true,
             inputs: Inputs::default(),
             inputs_edited: None,
             mix: Mix::default(),
@@ -802,10 +805,12 @@ impl Controller {
                 info,
                 state,
                 live,
+                input_meter,
                 mixer,
             } => {
                 self.status = STATUS_CONNECTED;
                 self.live = live;
+                self.input_meter = input_meter;
                 self.mixer = mixer;
                 self.raw = Some(state);
                 self.inputs = state.inputs();
@@ -1319,7 +1324,7 @@ impl Controller {
     /// cost nothing.
     fn push(&mut self) {
         // Also without a window: the input is heard from the tray too.
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         crate::virtual_devices::bridge::monitor_input(
             self.mixer && self.status == STATUS_CONNECTED && self.sls.input_monitored(),
         );
@@ -1342,6 +1347,7 @@ impl Controller {
             app.set_device_detail(detail.into());
         }
         app.set_live(self.live);
+        app.set_input_meter(self.input_meter);
         app.set_firmware_text(firmware_text.into());
         app.set_firmware_update(update);
         app.set_firmware_busy(matches!(self.firmware, FirmwareState::Checking));
@@ -1502,6 +1508,7 @@ mod tests {
                 info,
                 state,
                 live: true,
+                input_meter: true,
                 mixer,
             })
         });

@@ -48,6 +48,10 @@ Install them in Settings → Virtual outputs. Apps then see these devices:
 On macOS this needs the administrator password and access to the microphone, through which
 the interface's input reaches the mixes. On Linux it needs PipeWire 1.0 or later.
 
+To hear yourself in headphones, turn on Input 1 in the Monitor & Phones mix, or press
+DIRECT for the interface's own monitoring without delay. While Input 1 is heard there, and
+on Linux also while the window shows its level, the system shows the microphone as in use.
+
 ## Build
 
 ```sh

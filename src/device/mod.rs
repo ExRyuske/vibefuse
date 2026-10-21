@@ -155,6 +155,18 @@ pub trait Device: Send {
     fn set_asio(&mut self, _size: u32, _safe_mode: bool) -> Result<()> {
         Err(Error::new("ASIO is Windows only"))
     }
+
+    /// Whether a device that is not live still tells the level of its
+    /// input, from the audio rather than the device (Linux).
+    fn has_input_level(&self) -> bool {
+        false
+    }
+
+    /// The peak of Input 1 (0..=1) since the last call, see
+    /// [`Self::has_input_level`]; `None` while it is not known.
+    fn input_level(&mut self) -> Option<f32> {
+        None
+    }
 }
 
 pub enum Found {

@@ -117,6 +117,8 @@ pub struct LibusbDevice {
     info: DeviceInfo,
     /// This app's virtual devices, when they are set up.
     mixer: Option<Box<dyn SoftMixer>>,
+    /// The input's level can be recorded (Linux).
+    input_level: bool,
 }
 
 impl LibusbDevice {
@@ -141,6 +143,10 @@ impl LibusbDevice {
             handle,
             info,
             mixer: super::soft_mixer(),
+            #[cfg(target_os = "linux")]
+            input_level: super::pipewire::capture::available(),
+            #[cfg(not(target_os = "linux"))]
+            input_level: false,
         })
     }
 }
@@ -207,6 +213,21 @@ impl Device for LibusbDevice {
 
     fn has_mixer(&self) -> bool {
         self.mixer.is_some()
+    }
+
+    fn has_input_level(&self) -> bool {
+        self.input_level
+    }
+
+    fn input_level(&mut self) -> Option<f32> {
+        #[cfg(target_os = "linux")]
+        {
+            super::pipewire::capture::take_peak()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
     }
 
     fn mixer_set(&mut self, property: &[u8]) -> Result<()> {

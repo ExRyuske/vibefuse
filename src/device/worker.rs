@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::protocol::{METER_SLOTS, RawState, Write};
+use super::protocol::{METER_SLOTS, RawState, Write, meter};
 use super::sls::{self, Gains, Sls};
 use super::{
     Asio, Bus, Device, DeviceInfo, Found, SampleRate, read_meters, read_state, write_params,
@@ -94,6 +94,9 @@ pub enum Event {
         info: DeviceInfo,
         state: RawState,
         live: bool,
+        /// The input's level is known: from a live device, or recorded from
+        /// its audio (Linux).
+        input_meter: bool,
         /// The driver's software mixer is available (Windows).
         mixer: bool,
     },
@@ -226,20 +229,27 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
             .is_some_and(|device| device.has_mixer())
     }
 
+    /// Meters are read: from the device, or the input's from its audio.
+    fn metered(&self) -> bool {
+        self.pace.meters().is_some()
+            && self
+                .device
+                .as_ref()
+                .is_some_and(|device| device.is_live() || device.has_input_level())
+    }
+
     fn deadline(&self) -> Instant {
         if self.device.is_none() {
             return self.next_scan;
         }
         let mut next = if self.live() {
-            let polls = self.next_state;
-            if self.pace.meters().is_some() {
-                polls.min(self.next_meters)
-            } else {
-                polls
-            }
+            self.next_state
         } else {
             self.next_presence
         };
+        if self.metered() {
+            next = next.min(self.next_meters);
+        }
         if self.pace.rate().is_some() {
             next = next.min(self.next_rate);
         }
@@ -284,21 +294,26 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
         if self.apply_at.is_some_and(|at| now >= at) {
             self.apply();
         }
-        if self.live() {
-            if let Some(period) = self.pace.meters()
-                && now >= self.next_meters
-            {
-                let silent = self
-                    .silent_since
-                    .is_some_and(|since| now.duration_since(since) > SILENCE_HOLD);
-                self.next_meters = now
-                    + if silent {
-                        period.max(SILENT_METER_PERIOD)
-                    } else {
-                        period
-                    };
+        if let Some(period) = self.pace.meters()
+            && self.metered()
+            && now >= self.next_meters
+        {
+            let silent = self
+                .silent_since
+                .is_some_and(|since| now.duration_since(since) > SILENCE_HOLD);
+            self.next_meters = now
+                + if silent {
+                    period.max(SILENT_METER_PERIOD)
+                } else {
+                    period
+                };
+            if self.live() {
                 self.poll_meters();
+            } else {
+                self.poll_input_level();
             }
+        }
+        if self.live() {
             if now >= self.next_state {
                 self.next_state = now + self.pace.state();
                 self.poll_state();
@@ -376,6 +391,7 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
                     }
                 }
                 let live = device.is_live();
+                let input_meter = live || device.has_input_level();
                 let now = Instant::now();
                 self.device = Some(device);
                 self.state = Some(state);
@@ -393,6 +409,7 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
                     info,
                     state,
                     live,
+                    input_meter,
                     mixer,
                 });
             }
@@ -460,6 +477,28 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
             (Err(error), _) => self.failed(error),
             (Ok(()), None) => {}
         }
+    }
+
+    /// The input's meter of a device that is not live, from its audio;
+    /// silent while the recording is not there.
+    fn poll_input_level(&mut self) {
+        let level = self
+            .device
+            .as_mut()
+            .and_then(|device| device.input_level())
+            .unwrap_or(0.0);
+        let now = Instant::now();
+        if level > 0.0 {
+            self.silent_since = None;
+        } else {
+            let since = *self.silent_since.get_or_insert(now);
+            if self.pace == Pace::Visible && now.duration_since(since) > SILENCE_HOLD {
+                return;
+            }
+        }
+        let mut meters = [0.0; METER_SLOTS];
+        meters[meter::INPUT_1] = level;
+        self.emit(Event::Meters(meters));
     }
 
     /// The driver only measures the software mixer while switched on, so
