@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes THIRD-PARTY-NOTICES.txt: the license of every crate compiled into
-VibeFuse on macOS, Windows or Linux, with the license files the crates ship.
+VibeFuse on macOS or Windows, with the license files the crates ship.
 
 Texts several crates share verbatim are printed once at the end. The
 packaging script runs it; by hand, from the repository root:
@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 
-TARGETS = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+TARGETS = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
 OUT = sys.argv[1] if len(sys.argv) > 1 else "THIRD-PARTY-NOTICES.txt"
 LICENSE_FILE = re.compile(r"^(LICEN[CS]E|COPYING|NOTICE|COPYRIGHT|UNLICENSE)", re.IGNORECASE)
 # Code compiled from sources bundled inside a crate, under its own license.
@@ -127,7 +127,7 @@ def main():
         "Each is used under the license named with it.\n\n"
         "Slint (https://slint.dev) is used under the GNU General Public License 3.0,\n"
         "one of the licenses it is offered under, like VibeFuse itself.\n"
-        "libusb (macOS, Linux) is compiled in under the GNU Lesser General Public\n"
+        "libusb (macOS) is compiled in under the GNU Lesser General Public\n"
         "License 2.1 or later; its source is part of the libusb1-sys crate, and the\n"
         "source of VibeFuse lets you rebuild the program with a modified libusb.\n"
     )

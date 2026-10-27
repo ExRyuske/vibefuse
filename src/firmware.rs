@@ -4,9 +4,9 @@
 //! The same information is public: Arturia's resources page for the
 //! MiniFuse links the newest firmware file
 //! (`MiniFuse1_Firmware_Update_1_5_0_212_win.mf`). The page is fetched with
-//! the system's `curl` (part of macOS, Windows 10 and later and desktop
-//! Linux), which keeps a TLS stack out of this program. Updating itself is
-//! left to the official tools linked from the same page.
+//! the system's `curl` (part of macOS and of Windows 10 and later), which
+//! keeps a TLS stack out of this program. Updating itself is left to the
+//! official tools linked from the same page.
 
 use std::fmt;
 use std::process::{Command, Stdio};

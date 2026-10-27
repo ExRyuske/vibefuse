@@ -12,17 +12,21 @@ publish = false
 
 [dependencies]
 # macOS draws with Skia on Metal (Apple has deprecated OpenGL), which falls
-# back to drawing in software by itself. Windows and Linux use FemtoVG on
-# OpenGL, as cheap there, with Slint's software renderer as the fallback;
-# the Windows build also stays one file without the Visual C++ runtime that
-# Skia needs. `system-tray` brings Slint's own tray icon (AppKit,
-# Shell_NotifyIcon, StatusNotifierItem).
+# back to drawing in software by itself. Windows uses FemtoVG on OpenGL, as
+# cheap there, with Slint's software renderer as the fallback; the build
+# also stays one file without the Visual C++ runtime that Skia needs.
+# `system-tray` brings Slint's own tray icon (AppKit, Shell_NotifyIcon).
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "accessibility", "system-tray"] }
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "7"
 sys-locale = "0.3"
+# Effects: VST3's COM bindings (MIT since VST 3.8), plug-in libraries, and
+# parameter changes on their way to the audio thread without a lock.
+vst3 = "0.3"
+libloading = "0.9"
+rtrb = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 slint = { version = "1.18", default-features = false, features = ["renderer-skia", "unstable-winit-030"] }
@@ -34,13 +38,8 @@ slint = { version = "1.18", default-features = false, features = ["renderer-femt
 [target.'cfg(not(windows))'.dependencies]
 rusb = { version = "0.9", features = ["vendored"] }
 
-# Asks the session bus whether there is a tray; Slint's tray uses it already.
-[target.'cfg(target_os = "linux")'.dependencies]
-zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
-
 [target.'cfg(windows)'.dependencies]
-libloading = "0.9"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 slint-build = "1.18"

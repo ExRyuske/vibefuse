@@ -1,5 +1,5 @@
-# Raises the version, commits and tags it, builds the macOS, Windows and
-# Linux packages and publishes them on the Releases page. Runs by itself
+# Raises the version, commits and tags it, builds the macOS and Windows
+# packages and publishes them on the Releases page. Runs by itself
 # once CI passes on main, as the next patch version, when the program has
 # changed since the last release. By hand (Actions → Release → Run workflow)
 # for a minor or major version, or "none" to release the current one.
@@ -106,18 +106,11 @@ jobs:
           - os: windows-latest
             package: sh scripts/package.sh
             targets: ""
-          - os: ubuntu-22.04
-            package: sh scripts/package.sh
-            targets: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: v${{ needs.version.outputs.version }}
-      # rpm builds the Fedora package.
-      - name: Linux libraries
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libfreetype-dev libxkbcommon-dev rpm
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.targets }}
@@ -131,8 +124,6 @@ jobs:
           path: |
             target/dist/VibeFuse-*.dmg
             target/dist/VibeFuse-*.exe
-            target/dist/VibeFuse-*.tar.gz
-            target/dist/VibeFuse-*.rpm
             target/dist/THIRD-PARTY-NOTICES.txt
           if-no-files-found: error
 

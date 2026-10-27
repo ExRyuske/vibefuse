@@ -1,6 +1,6 @@
 # VibeFuse
 
-A control panel for the Arturia MiniFuse 1 audio interface on macOS, Windows and Linux.
+A control panel for the Arturia MiniFuse 1 audio interface on macOS and Windows.
 
 [Русская версия](README.ru.md)
 
@@ -8,7 +8,8 @@ A control panel for the Arturia MiniFuse 1 audio interface on macOS, Windows and
 
 - Input settings (INST, +48V, Direct monitor), level meters and the sample rate.
 - A mixer with three mixes: Monitor & Phones, Mix 3/4 and Mix 5/6. On Windows it uses
-  Arturia's driver; on macOS and Linux VibeFuse adds virtual devices for it.
+  Arturia's driver; on macOS VibeFuse adds virtual devices for it.
+- Effects on the microphone: VST3, VST2, Audio Unit (macOS) and LADSPA plug-ins.
 - Settings are restored every time the interface is connected.
 - Presets compatible with MiniFuse Control Center.
 - Runs in the menu bar or tray. English and Russian.
@@ -22,19 +23,8 @@ Download the latest version from the Releases page.
 - **Windows 10 or 11.** Install Arturia's MiniFuse Audio Driver first (it comes with
   MiniFuse Control Center). Put the `.exe` in a folder where it will stay and run it. The
   program is not signed, so Windows asks the first time: More info → Run anyway.
-- **Fedora** and other RPM-based Linux: `sudo dnf install ./VibeFuse-<version>-linux-x86_64.rpm`.
-- **Bazzite** and other Fedora Atomic systems (Silverblue, Kinoite): the `.tar.gz` below
-  needs no reboot. The `.rpm` works too, with `rpm-ostree install ./VibeFuse-<version>-linux-x86_64.rpm`
-  and a restart.
-- **Other Linux.** Unpack the `.tar.gz` and run `./install.sh`. It installs VibeFuse for
-  your user and adds a udev rule, so it asks for `sudo` once. `./install.sh --remove`
-  uninstalls.
 
-GNOME, the desktop of Fedora Workstation, shows the tray icon only with the AppIndicator
-extension (`gnome-shell-extension-appindicator`). Without it, closing the window quits
-VibeFuse.
-
-## Virtual outputs (macOS, Linux)
+## Virtual outputs (macOS)
 
 Install them in Settings → Virtual outputs. Apps then see these devices:
 
@@ -45,12 +35,37 @@ Install them in Settings → Virtual outputs. Apps then see these devices:
 | VibeFuse Mix 3/4, Mix 5/6 | record a mix in streaming or call apps |
 | VibeFuse Loopback Main 7/8 | a copy of Monitor & Phones |
 
-On macOS this needs the administrator password and access to the microphone, through which
-the interface's input reaches the mixes. On Linux it needs PipeWire 1.0 or later.
+This needs the administrator password and access to the microphone, through which the
+interface's input reaches the mixes.
 
 To hear yourself in headphones, turn on Input 1 in the Monitor & Phones mix, or press
-DIRECT for the interface's own monitoring without delay. While Input 1 is heard there, and
-on Linux also while the window shows its level, the system shows the microphone as in use.
+DIRECT for the interface's own monitoring without delay. While Input 1 is heard there, the
+system shows the microphone as in use.
+
+## Effects on the microphone
+
+![Effects](docs/effects.png)
+
+Press FX on the input, then Add…. VibeFuse runs VST3, VST2, Audio Unit (macOS) and LADSPA
+plug-ins on Input 1, top to bottom, and plays the result on the output you choose. The
+switch beside each plug-in bypasses it, and Open shows its own window. Its settings are on
+the page too, with sliders; click a value to type one, like `-6 dB` or `50%`. VibeFuse
+looks for plug-ins in the usual folders; Folder… adds another one. A chain exports to a
+file and imports on another computer, where a missing plug-in is looked for by name.
+
+The effects add no buffer of their own, only the delay a plug-in reports (a limiter's
+lookahead, say):
+
+- **macOS.** The output is any device that plays sound: the MiniFuse to hear yourself, a
+  VibeFuse device (Virtual 5/6, say) to have the processed voice in the mixer as a strip
+  of its own, or a virtual cable to another app. The effects run in blocks of 128 samples
+  (2.7 ms at 48 kHz) on the MiniFuse's clock, which another device follows.
+- **Windows.** The output is a pair of outputs of Arturia's ASIO driver, at the buffer size
+  set in Settings. Out 3/4 come back in the mixer as Virtual 3/4. While the effects are on,
+  other programs cannot use ASIO: switch them off to free it.
+
+Plug-ins load into VibeFuse itself, so a faulty one can take it down. One that crashes it
+while being looked at is skipped until it changes.
 
 ## Build
 
@@ -59,13 +74,14 @@ cargo run --release
 cargo test
 ```
 
-Linux needs `libfontconfig1-dev libfreetype-dev libxkbcommon-dev` (on Fedora
-`fontconfig-devel freetype-devel libxkbcommon-devel`); macOS needs the Xcode Command Line
-Tools. `sh scripts/package.sh` builds the release package for your system.
+macOS needs the Xcode Command Line Tools. `sh scripts/package.sh` builds the release
+package for your system. `cargo test -- --ignored installed` runs every effect installed on
+the computer through the chain.
 
-To publish a release, run the Release workflow in GitHub Actions and pick which part of
-the version to raise, or `none` to release the current one. It commits the new version,
-tags it, and attaches the macOS, Windows and Linux packages to a new release.
+Releases go out by themselves: once CI passes on `main` and the program has changed, the
+Release workflow raises the patch version, tags it and publishes the macOS and Windows
+packages. For a minor or major version, or to release the current one (`none`), run it by
+hand in GitHub Actions.
 
 ## Privacy
 
@@ -76,7 +92,7 @@ day for new firmware.
 ## License
 
 GPL-3.0-or-later, see [LICENSE](LICENSE). The licenses of the components VibeFuse is
-built from are in THIRD-PARTY-NOTICES.txt, inside the macOS and Linux packages and on
-each release page.
+built from are in THIRD-PARTY-NOTICES.txt, in the packages and on each release page.
 
 VibeFuse is not affiliated with Arturia. Arturia and MiniFuse are trademarks of Arturia.
+VST is a trademark of Steinberg Media Technologies GmbH, Audio Units of Apple Inc.

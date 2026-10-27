@@ -16,13 +16,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
-use crate::desktop::{self, autostart, instance};
+use crate::desktop::{autostart, instance};
 use crate::device::demo::DemoBus;
 use crate::device::protocol::{Inputs, Mix, MixControl, Param, RawState, meter as slot};
 use crate::device::sls::{self, Names, Sls, SlsControl};
 use crate::device::worker::{self, Command, Event, Pace, Restoration, Restore};
 use crate::device::{self, Asio, DeviceInfo, SampleRate};
 use crate::firmware::{self, Version};
+use crate::fx::{self, Effects};
 use crate::i18n::{self, Language};
 use crate::settings::presets::{self, Snapshot};
 use crate::settings::{self, Accent, FirmwareCheck, Settings};
@@ -124,7 +125,7 @@ pub fn run(start: Start) -> Result<(), slint::PlatformError> {
         ),
         None => (device::system_bus(), Box::new(settings::restore)),
     };
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     if demo.is_none() {
         // The restarted audio server starts the mixer from scratch.
         crate::virtual_devices::bridge::spawn(|| {
@@ -174,13 +175,14 @@ pub fn run(start: Start) -> Result<(), slint::PlatformError> {
         with(Controller::flush);
         let _ = slint::quit_event_loop();
     });
-    with(|c| {
-        c.tray = Some(tray.clone_strong());
-        c.has_tray = desktop::has_tray();
-    });
+    with(|c| c.tray = Some(tray.clone_strong()));
     if start != Start::Tray {
         show_window();
     }
+    // Plug-ins load once the event loop runs: some want it there.
+    Timer::single_shot(Duration::ZERO, || {
+        with(Controller::load_effects);
+    });
     // AppKit sets up its own Apple Event handlers while launching.
     #[cfg(target_os = "macos")]
     Timer::single_shot(Duration::ZERO, || {
@@ -253,12 +255,6 @@ fn hide_window() {
 /// The window was closed: the app goes on in the tray, and the window is
 /// dropped once Slint is done closing it.
 fn close_window() {
-    // Nothing would bring the window back: quit instead.
-    if with(|c| !c.has_tray).unwrap_or(false) {
-        with(Controller::flush);
-        let _ = slint::quit_event_loop();
-        return;
-    }
     if let Some(Some(app)) = with(Controller::detach) {
         Timer::single_shot(Duration::ZERO, move || drop(app));
     }
@@ -474,6 +470,122 @@ fn connect(app: &App) {
         });
     });
 
+    app.on_fx_opened(handler(|c| {
+        if c.fx_selected.is_none() && !c.effects.slots().is_empty() {
+            c.fx_selected = Some(0);
+        }
+        fx::output::refresh();
+        c.push();
+    }));
+    app.on_fx_toggle(handler(|c| {
+        let on = !c.effects.enabled();
+        c.effects.set_enabled(on);
+        c.schedule_save();
+        c.push();
+    }));
+    app.on_fx_select(|index| {
+        with(|c| {
+            c.fx_selected = index_of(index).filter(|&i| i < c.effects.slots().len());
+            c.fx_adding = false;
+            c.push();
+        });
+    });
+    app.on_fx_bypass(|index| {
+        with(|c| {
+            if let Some(i) = index_of(index)
+                && let Some(slot) = c.effects.slots().get(i)
+            {
+                let bypassed = !slot.entry.bypassed;
+                c.effects.set_bypassed(i, bypassed);
+                c.schedule_save();
+            }
+            c.push();
+        });
+    });
+    app.on_fx_edit(|index| {
+        with(|c| {
+            if let Some(i) = index_of(index) {
+                c.fx_selected = Some(i);
+                if let Err(error) = c.effects.open_editor(i) {
+                    c.notify(error);
+                }
+            }
+            c.push();
+        });
+    });
+    app.on_fx_move(|index, by| {
+        with(|c| {
+            if let Some(i) = index_of(index) {
+                c.effects.shift(i, by as isize);
+                let to = i.saturating_add_signed(by as isize);
+                if to < c.effects.slots().len() {
+                    c.fx_selected = Some(to);
+                }
+                c.schedule_save();
+            }
+            c.push();
+        });
+    });
+    app.on_fx_remove(|index| {
+        with(|c| {
+            if let Some(i) = index_of(index) {
+                c.effects.remove(i);
+                let count = c.effects.slots().len();
+                c.fx_selected = (count > 0).then(|| i.min(count - 1));
+                c.schedule_save();
+            }
+            c.push();
+        });
+    });
+    app.on_fx_param(|row, value| {
+        with(|c| c.set_fx_param(row, value));
+    });
+    app.on_fx_param_typed(|row, text| {
+        with(|c| c.type_fx_param(row, &text));
+    });
+    app.on_fx_output_selected(|row| {
+        with(|c| c.pick_fx_output(row));
+    });
+    app.on_fx_add(handler(|c| c.show_library(false)));
+    app.on_fx_rescan(handler(|c| c.show_library(true)));
+    app.on_fx_cancel_add(handler(|c| {
+        c.fx_adding = false;
+        c.push();
+    }));
+    app.on_fx_pick(|row| {
+        with(|c| c.pick_effect(row));
+    });
+    app.on_fx_add_folder(|| {
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title(tr!("Folder with plug-ins"))
+            .pick_folder()
+        else {
+            return;
+        };
+        with(|c| c.add_fx_folder(folder));
+    });
+    app.on_fx_import(|| {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(tr!("Import effects"))
+            .add_filter(tr!("Effects chain"), &[fx::CHAIN_EXTENSION])
+            .pick_file()
+        else {
+            return;
+        };
+        with(|c| c.import_effects(path));
+    });
+    app.on_fx_export(|| {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(tr!("Export effects"))
+            .add_filter(tr!("Effects chain"), &[fx::CHAIN_EXTENSION])
+            .set_file_name(format!("{}.{}", tr!("Effects"), fx::CHAIN_EXTENSION))
+            .save_file()
+        else {
+            return;
+        };
+        with(|c| c.export_effects(path));
+    });
+
     app.on_import_settings(|| {
         let Some(path) = rfd::FileDialog::new()
             .set_title(tr!("Import settings"))
@@ -586,8 +698,6 @@ struct Controller {
     /// The window, while it is open.
     app: Option<App>,
     tray: Option<Tray>,
-    /// The desktop shows the tray icon.
-    has_tray: bool,
     commands: Sender<Command>,
     demo: bool,
     settings: Settings,
@@ -595,8 +705,6 @@ struct Controller {
     status_text: String,
     device: Option<DeviceInfo>,
     live: bool,
-    /// The input's level is known, also when the device is not live.
-    input_meter: bool,
     inputs: Inputs,
     inputs_edited: Option<Instant>,
     mix: Mix,
@@ -626,6 +734,28 @@ struct Controller {
     accent_hex_valid: bool,
     asio: Option<Asio>,
     asio_sizes: Vec<u32>,
+    effects: Effects,
+    /// The plug-in whose parameters the effects page shows.
+    fx_selected: Option<usize>,
+    /// The page lists the installed plug-ins to add one.
+    fx_adding: bool,
+    /// The installed plug-ins, once looked for.
+    fx_library: Vec<fx::Descriptor>,
+    /// Said above that list, e.g. while scanning.
+    fx_library_text: String,
+    /// Parameter ids of the rows the page shows.
+    fx_param_ids: Vec<u32>,
+    /// The saved chain is loaded: until then the settings keep it.
+    fx_loaded: bool,
+    fx_ticks: u32,
+    /// Editors open at the last look, to notice one closing.
+    fx_editors: usize,
+    /// Keeps editors alive and follows the rate.
+    fx_timer: Timer,
+    fx_timer_period: Duration,
+    /// The outputs to pick from, and how the stream does, as last shown.
+    fx_outputs: Vec<fx::output::Output>,
+    fx_status: fx::output::Status,
     firmware: FirmwareState,
     message: Option<(String, Instant)>,
     unsaved: bool,
@@ -698,7 +828,6 @@ impl Controller {
         Self {
             app: None,
             tray: None,
-            has_tray: true,
             commands,
             demo,
             settings: Settings::load(),
@@ -706,7 +835,6 @@ impl Controller {
             status_text: String::new(),
             device: None,
             live: true,
-            input_meter: true,
             inputs: Inputs::default(),
             inputs_edited: None,
             mix: Mix::default(),
@@ -731,6 +859,19 @@ impl Controller {
             accent_hex_valid: true,
             asio: None,
             asio_sizes: Vec::new(),
+            effects: Effects::new(),
+            fx_selected: None,
+            fx_adding: false,
+            fx_library: Vec::new(),
+            fx_library_text: String::new(),
+            fx_param_ids: Vec::new(),
+            fx_loaded: false,
+            fx_ticks: 0,
+            fx_editors: 0,
+            fx_timer: Timer::default(),
+            fx_timer_period: Duration::ZERO,
+            fx_outputs: Vec::new(),
+            fx_status: fx::output::Status::default(),
             firmware: FirmwareState::Unknown,
             message: None,
             unsaved: false,
@@ -764,6 +905,7 @@ impl Controller {
     /// Lets go of the closed window and follows the device at the slowest
     /// pace. Returns the window, to be dropped once it is closed.
     fn detach(&mut self) -> Option<App> {
+        self.effects.close_editors();
         self.flush();
         self.send(Command::Pace(Pace::Background));
         if let Some(tray) = &self.tray {
@@ -805,12 +947,10 @@ impl Controller {
                 info,
                 state,
                 live,
-                input_meter,
                 mixer,
             } => {
                 self.status = STATUS_CONNECTED;
                 self.live = live;
-                self.input_meter = input_meter;
                 self.mixer = mixer;
                 self.raw = Some(state);
                 self.inputs = state.inputs();
@@ -1169,6 +1309,7 @@ impl Controller {
 
     fn flush(&mut self) {
         self.save_timer.stop();
+        self.remember_effects();
         if !std::mem::take(&mut self.unsaved) || self.demo {
             return;
         }
@@ -1324,10 +1465,11 @@ impl Controller {
     /// cost nothing.
     fn push(&mut self) {
         // Also without a window: the input is heard from the tray too.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         crate::virtual_devices::bridge::monitor_input(
             self.mixer && self.status == STATUS_CONNECTED && self.sls.input_monitored(),
         );
+        self.sync_effects();
         let Some(app) = self.app.as_ref().map(ComponentHandle::clone_strong) else {
             return;
         };
@@ -1347,7 +1489,6 @@ impl Controller {
             app.set_device_detail(detail.into());
         }
         app.set_live(self.live);
-        app.set_input_meter(self.input_meter);
         app.set_firmware_text(firmware_text.into());
         app.set_firmware_update(update);
         app.set_firmware_busy(matches!(self.firmware, FirmwareState::Checking));
@@ -1465,6 +1606,401 @@ impl Controller {
             .map(|(text, _)| text.as_str())
             .unwrap_or_default();
         app.set_message(message.into());
+        self.push_effects(&app);
+    }
+}
+
+/// How often open plug-in windows are kept alive, and how often the stream
+/// and the outputs are looked at otherwise.
+const FX_EDITOR_PERIOD: Duration = Duration::from_millis(40);
+const FX_IDLE_PERIOD: Duration = Duration::from_millis(500);
+/// The parameter list follows the plug-in's own window this often.
+const FX_FOLLOW_TICKS: u32 = 10;
+/// The outputs are looked for again this often while the page is open.
+const FX_OUTPUT_TICKS: u32 = 10;
+
+/// The effects on Input 1.
+impl Controller {
+    fn load_effects(&mut self) {
+        let saved = self.settings.effects.clone();
+        self.effects.folders = saved.folders;
+        self.effects.load(&saved.chain);
+        self.effects.set_enabled(saved.enabled);
+        self.fx_selected = (!self.effects.slots().is_empty()).then_some(0);
+        self.fx_loaded = true;
+        self.push();
+    }
+
+    /// Takes the chain, with the plug-ins' values and states, into the
+    /// settings.
+    fn remember_effects(&mut self) {
+        if !self.fx_loaded {
+            return;
+        }
+        let chain = self.effects.entries();
+        let saved = &mut self.settings.effects;
+        if chain != saved.chain
+            || saved.enabled != self.effects.enabled()
+            || saved.folders != self.effects.folders
+        {
+            saved.chain = chain;
+            saved.enabled = self.effects.enabled();
+            saved.folders = self.effects.folders.clone();
+            self.unsaved = true;
+        }
+    }
+
+    /// Runs the effects' stream on the chosen output while they change the
+    /// sound.
+    fn sync_effects(&mut self) {
+        let running = self.effects.active() && self.status == STATUS_CONNECTED && !self.demo;
+        let output = self.settings.effects.output.as_deref().filter(|_| running);
+        fx::output::set(output);
+        self.follow_stream();
+        self.update_fx_timer();
+    }
+
+    /// Sets the chain up for the rate the stream runs at.
+    fn follow_stream(&mut self) {
+        if let Some(rate) = fx::output::status().rate {
+            self.effects.set_rate(rate);
+        }
+    }
+
+    fn effects_page_open(&self) -> bool {
+        self.app.as_ref().is_some_and(|app| app.get_effects_open())
+    }
+
+    fn update_fx_timer(&mut self) {
+        let period = if self.effects.any_editor_open() {
+            FX_EDITOR_PERIOD
+        } else if self.effects.slots().is_empty() && !self.effects_page_open() {
+            Duration::ZERO
+        } else {
+            FX_IDLE_PERIOD
+        };
+        if period == self.fx_timer_period {
+            return;
+        }
+        self.fx_timer_period = period;
+        if period.is_zero() {
+            self.fx_timer.stop();
+        } else {
+            self.fx_timer.start(TimerMode::Repeated, period, || {
+                with(Controller::fx_tick);
+            });
+        }
+    }
+
+    fn fx_tick(&mut self) {
+        let edited = self.effects.poll();
+        let open = self
+            .effects
+            .slots()
+            .iter()
+            .filter(|s| s.editor_open())
+            .count();
+        let closed = open < self.fx_editors;
+        self.fx_editors = open;
+        fx::output::tick();
+        self.follow_stream();
+        self.fx_ticks = self.fx_ticks.wrapping_add(1);
+        if cfg!(target_os = "macos")
+            && self.effects_page_open()
+            && self.fx_ticks.is_multiple_of(FX_OUTPUT_TICKS)
+        {
+            fx::output::refresh();
+        }
+        if edited || closed {
+            self.schedule_save();
+        }
+        let (outputs, status) = (fx::output::outputs(), fx::output::status());
+        if outputs != self.fx_outputs || status != self.fx_status {
+            self.fx_outputs = outputs;
+            self.fx_status = status;
+            self.push();
+        } else if (edited || open > 0 && self.fx_ticks.is_multiple_of(FX_FOLLOW_TICKS))
+            && let Some(app) = self.app.as_ref().map(ComponentHandle::clone_strong)
+        {
+            self.push_fx_params(&app);
+        }
+        self.update_fx_timer();
+    }
+
+    /// The outputs to pick from; the chosen one stays there while it is not
+    /// connected.
+    fn fx_output_choices(&self) -> Vec<fx::output::Output> {
+        let mut choices = self.fx_outputs.clone();
+        let saved = &self.settings.effects;
+        if let Some(id) = &saved.output
+            && !choices.iter().any(|o| &o.id == id)
+        {
+            choices.push(fx::output::Output {
+                id: id.clone(),
+                name: tr!("{} (not connected)", saved.output_name),
+            });
+        }
+        choices
+    }
+
+    fn pick_fx_output(&mut self, row: i32) {
+        let Some(output) = index_of(row).and_then(|row| self.fx_output_choices().get(row).cloned())
+        else {
+            return;
+        };
+        if self.settings.effects.output.as_ref() != Some(&output.id) {
+            self.settings.effects.output = Some(output.id);
+            self.settings.effects.output_name = output.name;
+            self.schedule_save();
+        }
+        self.push();
+    }
+
+    /// Where the effects play, or why they do not.
+    fn fx_note(&self) -> String {
+        if let Some(problem) = self
+            .fx_status
+            .problem
+            .as_ref()
+            .filter(|_| self.effects.active())
+        {
+            return tr!("The effects did not start: {}", problem);
+        }
+        match (
+            cfg!(target_os = "macos"),
+            self.settings.effects.output.is_some(),
+        ) {
+            (true, false) => tr!(
+                "Choose where the effects play: the MiniFuse to hear yourself, or a VibeFuse device to have them in the mixer."
+            ),
+            (true, true) => tr!(
+                "Input 1 plays on the chosen output with these effects. A VibeFuse device brings it into the mixer as a strip of its own."
+            ),
+            (false, false) => {
+                tr!("Choose where the effects play. Out 3/4 come back in the mixer as Virtual 3/4.")
+            }
+            (false, true) => tr!(
+                "While the effects are on, VibeFuse holds the ASIO driver: other programs cannot use it. Out 3/4 come back in the mixer as Virtual 3/4."
+            ),
+        }
+    }
+
+    fn push_effects(&mut self, app: &App) {
+        app.set_fx_enabled(self.effects.enabled());
+        app.set_fx_active(self.effects.active());
+        app.set_fx_note(self.fx_note().into());
+        let choices = self.fx_output_choices();
+        let names: Vec<SharedString> = choices.iter().map(|o| o.name.as_str().into()).collect();
+        if app.get_fx_outputs().iter().ne(names.iter().cloned()) {
+            app.set_fx_outputs(ModelRc::new(VecModel::from(names)));
+        }
+        let chosen = choices
+            .iter()
+            .position(|o| Some(&o.id) == self.settings.effects.output.as_ref());
+        app.set_fx_output_index(chosen.map_or(-1, |i| i as i32));
+        let slots: Vec<FxSlot> = self
+            .effects
+            .slots()
+            .iter()
+            .map(|slot| FxSlot {
+                name: slot.entry.name.as_str().into(),
+                detail: slot
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| slot.entry.format.label().to_owned())
+                    .into(),
+                error: slot.error.is_some(),
+                bypassed: slot.entry.bypassed,
+                editor: slot.has_editor(),
+            })
+            .collect();
+        if app.get_fx_slots().iter().ne(slots.iter().cloned()) {
+            app.set_fx_slots(ModelRc::new(VecModel::from(slots)));
+        }
+        app.set_fx_selected(self.fx_selected.map_or(-1, |i| i as i32));
+        app.set_fx_adding(self.fx_adding);
+        let library: Vec<FxPlugin> = self
+            .fx_library
+            .iter()
+            .map(|d| FxPlugin {
+                name: d.name.as_str().into(),
+                detail: if d.vendor.is_empty() {
+                    d.format.label().into()
+                } else {
+                    format!("{} · {}", d.vendor, d.format.label()).into()
+                },
+            })
+            .collect();
+        if app.get_fx_library().iter().ne(library.iter().cloned()) {
+            app.set_fx_library(ModelRc::new(VecModel::from(library)));
+        }
+        app.set_fx_library_text(self.fx_library_text.as_str().into());
+        self.push_fx_params(app);
+    }
+
+    /// The selected plug-in's parameters, while the page shows them.
+    fn push_fx_params(&mut self, app: &App) {
+        let params = match self.fx_selected {
+            Some(index) if app.get_effects_open() && !self.fx_adding => self.effects.params(index),
+            _ => Vec::new(),
+        };
+        let rows: Vec<FxParam> = params.iter().map(fx_row).collect();
+        self.fx_param_ids = params.iter().map(|p| p.id).collect();
+        let model = app.get_fx_params();
+        if model.row_count() != rows.len() {
+            app.set_fx_params(ModelRc::new(VecModel::from(rows)));
+            return;
+        }
+        for (i, row) in rows.into_iter().enumerate() {
+            if model.row_data(i).as_ref() != Some(&row) {
+                model.set_row_data(i, row);
+            }
+        }
+    }
+
+    /// A value typed into the parameter list.
+    fn type_fx_param(&mut self, row: i32, text: &str) {
+        let (Some(slot), Some(&id)) = (
+            self.fx_selected,
+            index_of(row).and_then(|row| self.fx_param_ids.get(row)),
+        ) else {
+            return;
+        };
+        if self.effects.type_param(slot, id, text) {
+            self.schedule_save();
+        } else {
+            self.notify(tr!("“{}” is not a value of this setting", text.trim()));
+        }
+        self.push();
+    }
+
+    fn set_fx_param(&mut self, row: i32, value: f32) {
+        let (Some(slot), Some(&id)) = (
+            self.fx_selected,
+            index_of(row).and_then(|row| self.fx_param_ids.get(row)),
+        ) else {
+            return;
+        };
+        self.effects.set_param(slot, id, f64::from(value));
+        self.schedule_save();
+        // Only this row: a plug-in may have a thousand.
+        if let (Some(app), Some(param), Some(row)) = (
+            self.app.as_ref(),
+            self.effects.param(slot, id),
+            index_of(row),
+        ) && row < app.get_fx_params().row_count()
+        {
+            app.get_fx_params().set_row_data(row, fx_row(&param));
+        }
+    }
+
+    /// Shows the installed plug-ins, looking for them the first time (or
+    /// again, `fresh`).
+    fn show_library(&mut self, fresh: bool) {
+        self.fx_adding = true;
+        if self.effects.scanned() && !fresh {
+            return self.push();
+        }
+        self.fx_library_text = tr!("Looking for plug-ins…");
+        self.push();
+        // Scanning loads plug-ins on this thread; the text shows first.
+        Timer::single_shot(Duration::from_millis(50), move || {
+            with(|c| c.scan_effects(fresh));
+        });
+    }
+
+    fn scan_effects(&mut self, fresh: bool) {
+        self.effects.scan(fresh);
+        self.fx_library = self.effects.installed().to_vec();
+        self.fx_library_text = match self.effects.crashed() {
+            Some(path) => tr!(
+                "{} crashed VibeFuse while it was looked at, and is skipped until it changes.",
+                path.display()
+            ),
+            None if self.fx_library.is_empty() => {
+                tr!("No effects found. Add the folder you keep plug-ins in.")
+            }
+            None => String::new(),
+        };
+        self.push();
+    }
+
+    fn pick_effect(&mut self, row: i32) {
+        let Some(descriptor) = index_of(row)
+            .and_then(|row| self.fx_library.get(row))
+            .cloned()
+        else {
+            return;
+        };
+        let index = self.effects.add(&descriptor);
+        if let Some(error) = self.effects.slots()[index].error.clone() {
+            self.notify(error);
+        }
+        // The first effect switches them on.
+        if self.effects.slots().len() == 1 && !self.effects.enabled() {
+            self.effects.set_enabled(true);
+        }
+        self.fx_selected = Some(index);
+        self.fx_adding = false;
+        self.schedule_save();
+        self.push();
+    }
+
+    fn add_fx_folder(&mut self, folder: PathBuf) {
+        if !self.effects.folders.contains(&folder) {
+            self.effects.folders.push(folder);
+            self.schedule_save();
+        }
+        self.fx_library_text = tr!("Looking for plug-ins…");
+        self.push();
+        Timer::single_shot(Duration::from_millis(50), || {
+            with(|c| c.scan_effects(false));
+        });
+    }
+
+    fn import_effects(&mut self, path: PathBuf) {
+        let chain = std::fs::read_to_string(&path)
+            .map_err(|error| tr!("Couldn't read the file: {}", error))
+            .and_then(|text| Effects::parse(&text));
+        match chain {
+            Ok(mut chain) => {
+                self.effects.resolve(&mut chain);
+                self.effects.load(&chain);
+                self.fx_selected = (!chain.is_empty()).then_some(0);
+                self.fx_adding = false;
+                let missing = self
+                    .effects
+                    .slots()
+                    .iter()
+                    .filter(|s| s.error.is_some())
+                    .count();
+                self.notify(if missing == 0 {
+                    tr!("Effects imported")
+                } else {
+                    tr!("Effects imported; {} of them did not load", missing)
+                });
+                self.schedule_save();
+            }
+            Err(error) => self.notify(error),
+        }
+        self.push();
+    }
+
+    fn export_effects(&mut self, path: PathBuf) {
+        match std::fs::write(&path, self.effects.export()) {
+            Ok(()) => self.notify(tr!("Effects exported")),
+            Err(error) => self.notify(tr!("Couldn't save the file: {}", error)),
+        }
+        self.push();
+    }
+}
+
+fn fx_row(param: &fx::Param) -> FxParam {
+    FxParam {
+        title: param.title.as_str().into(),
+        value: param.value as f32,
+        text: param.text.as_str().into(),
+        read_only: param.read_only,
     }
 }
 
@@ -1508,7 +2044,6 @@ mod tests {
                 info,
                 state,
                 live: true,
-                input_meter: true,
                 mixer,
             })
         });
@@ -1966,6 +2501,101 @@ mod tests {
         assert!(!app.get_devices_supported());
         assert!(control(&app, "Remove").is_none());
         assert!(control(&app, "Start at login").is_some());
+    }
+
+    #[test]
+    fn effects_are_added_tuned_and_removed() {
+        let _turn = fx::rack::tests::TURN
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let Some(library) = fx::build_amplifier("ui") else {
+            eprintln!("no C compiler: skipped");
+            return;
+        };
+        let (app, _rx) = setup();
+        with(Controller::load_effects);
+        control(&app, "Effects")
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert!(app.get_effects_open());
+        assert_eq!(app.get_fx_slots().row_count(), 0);
+        with(|c| {
+            c.fx_library = vec![fx::Descriptor {
+                format: fx::Format::Ladspa,
+                path: library,
+                uid: "4242".into(),
+                name: "Test Amplifier".into(),
+                vendor: "VibeFuse".into(),
+                is_instrument: false,
+            }];
+            c.fx_adding = true;
+            c.push();
+        });
+        // Picking the first effect switches the effects on.
+        control(&app, "Test Amplifier")
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(app.get_fx_slots().row_count(), 1);
+        assert!(app.get_fx_enabled() && app.get_fx_active());
+        assert_eq!(app.get_fx_selected(), 0);
+        assert_eq!(app.get_fx_params().row_count(), 1);
+
+        control(&app, "Gain").unwrap().set_accessible_value("0.75");
+        assert_eq!(app.get_fx_params().row_data(0).unwrap().text, "3.00");
+        // Typed as the plug-in writes it, or as a percentage.
+        let typed = control(&app, "Value of Gain").unwrap();
+        typed.set_accessible_value("2,5");
+        assert_eq!(app.get_fx_params().row_data(0).unwrap().text, "2.50");
+        typed.set_accessible_value("25%");
+        assert_eq!(app.get_fx_params().row_data(0).unwrap().text, "1.00");
+        typed.set_accessible_value("loud");
+        assert!(app.get_message().contains("loud"), "nonsense is refused");
+        typed.set_accessible_value("3");
+        let mut samples = vec![0.1; 8];
+        assert!(fx::rack::process(&mut samples, 48_000.0));
+        assert!((samples[0] - 0.3).abs() < 1e-6, "gain 3: {}", samples[0]);
+
+        let switch = app
+            .root_element()
+            .query_descendants()
+            .match_accessible_role(AccessibleRole::Switch)
+            .match_predicate(|e| e.accessible_label().is_some_and(|l| l == "Test Amplifier"))
+            .find_first()
+            .unwrap();
+        switch.invoke_accessible_default_action();
+        assert!(app.get_fx_slots().row_data(0).unwrap().bypassed);
+        assert!(!app.get_fx_active());
+
+        // The output is picked from the list; a missing one stays shown.
+        with(|c| {
+            c.fx_outputs = vec![fx::output::Output {
+                id: "phones".into(),
+                name: "Phones".into(),
+            }];
+            c.settings.effects.output = Some("gone".into());
+            c.settings.effects.output_name = "Cable".into();
+            c.push();
+        });
+        let outputs: Vec<SharedString> = app.get_fx_outputs().iter().collect();
+        assert_eq!(outputs, ["Phones", "Cable (not connected)"]);
+        assert_eq!(app.get_fx_output_index(), 1);
+        app.invoke_fx_output_selected(0);
+        assert_eq!(app.get_fx_output_index(), 0);
+
+        with(Controller::flush);
+        let saved = with(|c| c.settings.effects.clone()).unwrap();
+        assert!(saved.enabled);
+        assert_eq!(saved.output.as_deref(), Some("phones"));
+        assert_eq!(saved.chain.len(), 1);
+        assert!(saved.chain[0].bypassed);
+        assert_eq!(saved.chain[0].params, [(0, 0.75)]);
+
+        control(&app, "Remove")
+            .unwrap()
+            .invoke_accessible_default_action();
+        assert_eq!(app.get_fx_slots().row_count(), 0);
+        assert_eq!(app.get_fx_selected(), -1);
+        with(|c| c.effects.set_enabled(false));
     }
 
     #[test]

@@ -420,6 +420,17 @@ pub fn device_uid(device: AudioObjectId) -> Option<String> {
     read_string(device, DEVICE_UID)
 }
 
+/// Devices that play sound, as (UID, name).
+pub fn output_devices() -> Vec<(String, String)> {
+    let devices: Vec<AudioObjectId> =
+        read_array(SYSTEM_OBJECT, address(HARDWARE_DEVICES)).unwrap_or_default();
+    devices
+        .into_iter()
+        .filter(|&id| stream_channels(id, SCOPE_OUTPUT).iter().sum::<u32>() > 0)
+        .filter_map(|id| Some((read_string(id, DEVICE_UID)?, read_string(id, OBJECT_NAME)?)))
+        .collect()
+}
+
 /// The device with this UID, also hidden ones.
 pub fn device_by_uid(uid: &str) -> Option<AudioObjectId> {
     let uid = Cf::string(uid);

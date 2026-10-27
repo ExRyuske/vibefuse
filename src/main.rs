@@ -1,8 +1,14 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+// The device transports, the virtual devices and the plug-in windows exist
+// for these two systems only.
+#[cfg(not(any(target_os = "macos", windows)))]
+compile_error!("VibeFuse runs on macOS and Windows");
+
 mod desktop;
 mod device;
 mod firmware;
+mod fx;
 mod i18n;
 mod settings;
 mod ui;
@@ -38,7 +44,7 @@ fn main() -> ExitCode {
             let windows = match args.get(1).map(String::as_str) {
                 None => cfg!(windows),
                 Some("windows") => true,
-                Some("mac" | "macos" | "linux") => false,
+                Some("mac" | "macos") => false,
                 Some(other) => return usage_error(other),
             };
             ui::run(ui::Start::Demo { windows }).map_err(|e| e.to_string())
@@ -97,9 +103,6 @@ fn dump() -> Result<(), String> {
         info.product, info.serial, info.firmware
     );
     let live = device.is_live();
-    if !live {
-        println!("(Linux: the ALSA driver is detached while reading)");
-    }
     device
         .session(&mut |link| {
             let raw = read_state(link)?;
@@ -141,10 +144,8 @@ fn dump() -> Result<(), String> {
     if device.has_mixer() {
         let kind = if cfg!(windows) {
             "Arturia's driver"
-        } else if cfg!(target_os = "macos") {
-            "virtual outputs (VibeFuse Mixer plug-in)"
         } else {
-            "virtual outputs (PipeWire)"
+            "virtual outputs (VibeFuse Mixer plug-in)"
         };
         println!("mixer:    {kind}");
         let _ = device.mixer_set(&sls::meters_switch(true));
@@ -181,6 +182,11 @@ fn dump() -> Result<(), String> {
             asio.sizes,
             if asio.safe_mode { "on" } else { "off" }
         );
+    }
+    #[cfg(windows)]
+    match fx::asio::describe() {
+        Ok(text) => println!("effects:  {text}"),
+        Err(error) => println!("effects:  ASIO not available: {error}"),
     }
     Ok(())
 }

@@ -171,8 +171,7 @@ pub mod instance {
 
 pub mod autostart {
     //! Starting VibeFuse at login, in the tray without a window: a LaunchAgent
-    //! on macOS, an XDG autostart entry on Linux, the `Run` key of the registry
-    //! on Windows. Switching it only changes the registration; the running app
+    //! on macOS, the `Run` key of the registry on Windows. Switching it only changes the registration; the running app
     //! is left alone.
 
     use std::path::PathBuf;
@@ -270,65 +269,6 @@ pub mod autostart {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    mod platform {
-        use super::*;
-
-        fn entry() -> Option<PathBuf> {
-            Some(
-                dirs::config_dir()?
-                    .join("autostart")
-                    .join("vibefuse.desktop"),
-            )
-        }
-
-        pub fn is_enabled() -> bool {
-            entry().is_some_and(|path| path.exists())
-        }
-
-        /// Quotes a path for the `Exec` key of a desktop entry.
-        fn quote(path: &str) -> String {
-            let mut quoted = String::from('"');
-            for c in path.chars() {
-                if matches!(c, '"' | '`' | '$' | '\\') {
-                    quoted.push('\\');
-                }
-                quoted.push(c);
-            }
-            quoted.push('"');
-            quoted
-        }
-
-        pub fn enable() -> Result<(), String> {
-            let path = entry().ok_or("no config folder")?;
-            let exe = executable()?;
-            let text = format!(
-                "[Desktop Entry]\nType=Application\nName=VibeFuse\n\
-                 Comment=MiniFuse 1 control panel in the tray\n\
-                 Exec={} {BACKGROUND}\nIcon=vibefuse\nTerminal=false\n\
-                 X-GNOME-Autostart-enabled=true\n",
-                quote(&exe.to_string_lossy())
-            );
-            write(&path, &text)
-        }
-
-        pub fn disable() -> Result<(), String> {
-            remove(entry())
-        }
-
-        #[cfg(test)]
-        mod tests {
-            #[test]
-            fn exec_paths_are_quoted() {
-                assert_eq!(
-                    super::quote("/opt/Vibe Fuse/vibefuse"),
-                    "\"/opt/Vibe Fuse/vibefuse\""
-                );
-                assert_eq!(super::quote("/a/$b\"c"), "\"/a/\\$b\\\"c\"");
-            }
-        }
-    }
-
     #[cfg(windows)]
     mod platform {
         use std::process::{Command, Stdio};
@@ -378,25 +318,6 @@ pub mod autostart {
     }
 
     pub use platform::{disable, enable, is_enabled};
-}
-
-/// Whether the desktop shows tray icons. GNOME (Fedora's default) does not
-/// without the AppIndicator extension; there a closed window could never be
-/// opened again from the tray.
-pub fn has_tray() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let watcher = || -> zbus::Result<bool> {
-            let bus = zbus::blocking::Connection::session()?;
-            let dbus = zbus::blocking::fdo::DBusProxy::new(&bus)?;
-            Ok(dbus.name_has_owner("org.kde.StatusNotifierWatcher".try_into()?)?)
-        };
-        watcher().unwrap_or(false)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        true
-    }
 }
 
 #[cfg(target_os = "macos")]

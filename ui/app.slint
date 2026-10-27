@@ -4,7 +4,7 @@
 // tray icon outlives the window. Texts are English; translations come from
 // translations/<language>/LC_MESSAGES/vibefuse.po.
 
-import { Palette } from "std-widgets.slint";
+import { ListView, Palette } from "std-widgets.slint";
 
 // Number parsing lives in Rust: it accepts "-6,5", "−6" and a "dB" suffix.
 export global Numbers {
@@ -27,6 +27,31 @@ export struct SourceView {
     muted: bool,
     meter-left: float,
     meter-right: float,
+}
+
+// A plug-in of the effects chain.
+export struct FxSlot {
+    name: string,
+    // Its format, or why it does not run.
+    detail: string,
+    error: bool,
+    bypassed: bool,
+    // It has a window of its own.
+    editor: bool,
+}
+
+// A parameter of the selected plug-in, 0..1.
+export struct FxParam {
+    title: string,
+    value: float,
+    text: string,
+    read-only: bool,
+}
+
+// An installed plug-in to add.
+export struct FxPlugin {
+    name: string,
+    detail: string,
 }
 
 // A renamable channel: the shown name and the channel it stands for.
@@ -1281,6 +1306,289 @@ component Divider inherits Rectangle {
     background: Theme.border;
 }
 
+// A plug-in parameter, 0..1, filled from the left like the pan from its
+// middle. Drag or use the arrows; double-click for the middle.
+component ParamSlider inherits Rectangle {
+    in property <float> value;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback changed(float);
+
+    height: 16px;
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-value: root.value.to-fixed(2);
+    accessible-value-minimum: 0;
+    accessible-value-maximum: 1;
+    accessible-value-step: 0.01;
+    accessible-action-set-value(v) => {
+        root.set(v.to-float());
+    }
+
+    property <length> knob: 8px;
+    property <length> travel: root.width - root.knob;
+    property <length> at: root.knob / 2 + root.travel * clamp(root.value, 0, 1);
+
+    function set(v: float) {
+        if root.enabled {
+            root.changed(clamp(v, 0, 1));
+        }
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.RightArrow || event.text == Key.UpArrow {
+                root.set(root.value + (event.modifiers.shift ? 0.001 : 0.01));
+                return accept;
+            }
+            if event.text == Key.LeftArrow || event.text == Key.DownArrow {
+                root.set(root.value - (event.modifiers.shift ? 0.001 : 0.01));
+                return accept;
+            }
+            reject
+        }
+    }
+
+    Rectangle {
+        y: (root.height - self.height) / 2;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.track;
+    }
+
+    Rectangle {
+        x: 0;
+        y: (root.height - self.height) / 2;
+        width: root.at;
+        height: 4px;
+        border-radius: 2px;
+        background: root.enabled ? Theme.accent : Theme.muted;
+    }
+
+    Cap {
+        x: root.at - self.width / 2;
+        width: root.knob;
+        height: root.height;
+        dimmed: !root.enabled;
+        focused: focus.has-focus;
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        property <float> start;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                self.start = root.value;
+                focus.focus();
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.set(self.start + (self.mouse-x - self.pressed-x) / root.travel);
+            }
+        }
+        double-clicked => {
+            root.set(0.5);
+        }
+    }
+}
+
+// A small square button with a drawn icon.
+component IconButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <bool> enabled: true;
+    callback clicked;
+
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: touch.has-hover && root.enabled ? Theme.hover : Theme.control;
+    opacity: root.enabled ? 1 : 0.5;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        if root.enabled {
+            root.clicked();
+        }
+    }
+
+    Path {
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: root.icon;
+        stroke: Theme.text;
+        stroke-width: 1.5px;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A parameter's value as the plug-in writes it. Click to type another:
+// Enter keeps it, Esc cancels.
+component FxValue inherits Rectangle {
+    in property <string> value;
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback typed(string);
+
+    property <bool> editing;
+
+    width: 84px;
+    height: 22px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: root.editing ? Theme.accent : (touch.has-hover && root.enabled ? Theme.border : transparent);
+    background: root.editing ? Theme.control : transparent;
+    accessible-role: text-input;
+    accessible-label: @tr("Value of {}", root.label);
+    accessible-value: root.value;
+    accessible-enabled: root.enabled;
+    accessible-action-set-value(text) => {
+        root.typed(text);
+    }
+
+    if !root.editing: Text {
+        x: 4px;
+        width: root.width - 8px;
+        text: root.value;
+        color: Theme.muted;
+        font-size: 11px;
+        overflow: elide;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+
+    input := TextInput {
+        x: 4px;
+        width: root.width - 8px;
+        visible: root.editing;
+        enabled: root.editing;
+        color: Theme.text;
+        font-size: 11px;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        selection-background-color: Theme.accent;
+        selection-foreground-color: Theme.on-accent;
+        accepted => {
+            root.editing = false;
+            root.typed(self.text);
+        }
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.editing = false;
+                return accept;
+            }
+            reject
+        }
+        changed has-focus => {
+            if !self.has-focus {
+                root.editing = false;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled && !root.editing;
+        mouse-cursor: text;
+        clicked => {
+            input.text = root.value;
+            root.editing = true;
+            input.focus();
+            input.select-all();
+        }
+    }
+}
+
+// A plug-in of the chain: on/off, its name, its window.
+component FxRow inherits Rectangle {
+    in property <FxSlot> slot;
+    in property <bool> selected;
+    callback clicked;
+    callback bypass-clicked;
+    callback edit-clicked;
+
+    height: 46px;
+    border-radius: 8px;
+    background: root.selected ? Theme.control : (touch.has-hover ? Theme.hover : transparent);
+    border-width: root.selected ? 1px : 0px;
+    border-color: Theme.border;
+    accessible-role: list-item;
+    accessible-label: root.slot.name;
+    accessible-item-selected: root.selected;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 6px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            Switch {
+                label: root.slot.name;
+                on: !root.slot.bypassed && !root.slot.error;
+                toggled => {
+                    root.bypass-clicked();
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 1px;
+
+            Text {
+                text: root.slot.name;
+                color: Theme.text;
+                font-size: 12px;
+                font-weight: 600;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.slot.detail;
+                color: root.slot.error ? Theme.red : Theme.muted;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+
+        if root.slot.editor: VerticalLayout {
+            alignment: center;
+            Button {
+                text: @tr("Open");
+                flat: true;
+                clicked => {
+                    root.edit-clicked();
+                }
+            }
+        }
+    }
+}
+
 export component App inherits Window {
     title: "VibeFuse";
     icon: @image-url("../assets/icon-256.png");
@@ -1294,10 +1602,8 @@ export component App inherits Window {
     in property <string> device-name: "MiniFuse 1";
     in property <string> device-detail;
     in property <string> message;
-    // Live devices report meters; Linux applies changes in batches.
+    // Live devices report meters.
     in property <bool> live: true;
-    // The input's level is known, on Linux from its audio.
-    in property <bool> input-meter: true;
     in-out property <bool> settings-open;
 
     in property <bool> inst;
@@ -1330,7 +1636,7 @@ export component App inherits Window {
     in property <float> meter-right: -60;
 
     // Software mixer: the Windows driver's, or the virtual devices of this
-    // app on macOS and Linux.
+    // app on macOS.
     in property <bool> mixer;
     in property <[string]> mix-names;
     in property <int> mix-index;
@@ -1358,7 +1664,7 @@ export component App inherits Window {
     in property <[string]> asio-sizes;
     in property <int> asio-index: -1;
     in property <bool> asio-safe;
-    // Virtual devices (macOS, Linux)
+    // Virtual devices (macOS)
     in property <bool> devices-supported;
     in property <string> devices-text;
     // Text of the install button; empty hides it.
@@ -1368,6 +1674,23 @@ export component App inherits Window {
     in property <string> autostart-text;
     in property <bool> autostart;
     in property <string> version;
+
+    // Effects on Input 1
+    in-out property <bool> effects-open;
+    in property <bool> fx-enabled;
+    // On, with a plug-in that runs: the input card's FX lights up.
+    in property <bool> fx-active;
+    in property <string> fx-note;
+    in property <[FxSlot]> fx-slots;
+    in property <int> fx-selected: -1;
+    in property <[FxParam]> fx-params;
+    // The list of installed plug-ins is shown instead of the parameters.
+    in property <bool> fx-adding;
+    in property <[FxPlugin]> fx-library;
+    in property <string> fx-library-text;
+    // Where the effects play.
+    in property <[string]> fx-outputs;
+    in property <int> fx-output-index: -1;
 
     callback toggle-inst();
     callback toggle-phantom();
@@ -1402,6 +1725,26 @@ export component App inherits Window {
     callback install-devices();
     callback remove-devices();
     callback toggle-autostart();
+    callback fx-opened();
+    callback fx-toggle();
+    callback fx-select(int);
+    callback fx-bypass(int);
+    callback fx-edit(int);
+    // index, -1 up or 1 down
+    callback fx-move(int, int);
+    callback fx-remove(int);
+    // parameter index, value 0..1
+    callback fx-param(int, float);
+    // parameter index, the value as typed
+    callback fx-param-typed(int, string);
+    callback fx-output-selected(int);
+    callback fx-add();
+    callback fx-cancel-add();
+    callback fx-pick(int);
+    callback fx-rescan();
+    callback fx-add-folder();
+    callback fx-import();
+    callback fx-export();
 
     VerticalLayout {
         padding: 16px;
@@ -1432,7 +1775,7 @@ export component App inherits Window {
                 horizontal-stretch: 1;
             }
 
-            if root.status == 3 && root.rate-index >= 0 && !root.settings-open: VerticalLayout {
+            if root.status == 3 && root.rate-index >= 0 && !root.settings-open && !root.effects-open: VerticalLayout {
                 alignment: center;
                 Choice {
                     label: @tr("Sample rate");
@@ -1445,7 +1788,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.status == 3 && !root.settings-open: VerticalLayout {
+            if root.status == 3 && !root.settings-open && !root.effects-open: VerticalLayout {
                 alignment: center;
                 Button {
                     text: @tr("Import…");
@@ -1456,7 +1799,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.status == 3 && !root.settings-open: VerticalLayout {
+            if root.status == 3 && !root.settings-open && !root.effects-open: VerticalLayout {
                 alignment: center;
                 Button {
                     text: @tr("Export…");
@@ -1470,10 +1813,14 @@ export component App inherits Window {
             VerticalLayout {
                 alignment: center;
                 Button {
-                    text: root.settings-open ? @tr("Done") : @tr("Settings");
-                    primary: root.settings-open;
+                    text: root.settings-open || root.effects-open ? @tr("Done") : @tr("Settings");
+                    primary: root.settings-open || root.effects-open;
                     clicked => {
-                        root.settings-open = !root.settings-open;
+                        if root.effects-open {
+                            root.effects-open = false;
+                        } else {
+                            root.settings-open = !root.settings-open;
+                        }
                     }
                 }
             }
@@ -1666,7 +2013,340 @@ export component App inherits Window {
             }
         }
 
-        if root.status == 3 && !root.settings-open: HorizontalLayout {
+        if root.effects-open && !root.settings-open: Card {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Switch {
+                            label: @tr("Effects");
+                            on: root.fx-enabled;
+                            toggled => {
+                                root.fx-toggle();
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Heading {
+                            text: @tr("Effects on {}", root.input-label.text);
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            text: @tr("Import…");
+                            flat: true;
+                            clicked => {
+                                root.fx-import();
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            text: @tr("Export…");
+                            flat: true;
+                            enabled: root.fx-slots.length > 0;
+                            clicked => {
+                                root.fx-export();
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: @tr("Output");
+                            color: Theme.text;
+                            font-size: 12px;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Choice {
+                            label: @tr("Output");
+                            preferred: 200px;
+                            options: root.fx-outputs;
+                            index: root.fx-output-index;
+                            selected(index) => {
+                                root.fx-output-selected(index);
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                if root.fx-note != "": Text {
+                    text: root.fx-note;
+                    color: Theme.muted;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    vertical-stretch: 1;
+                    min-height: 320px;
+
+                    // The chain, top to bottom in the order of the sound.
+                    VerticalLayout {
+                        width: 250px;
+                        spacing: 6px;
+
+                        ListView {
+                            vertical-stretch: 1;
+                            for slot[index] in root.fx-slots: FxRow {
+                                slot: slot;
+                                selected: index == root.fx-selected && !root.fx-adding;
+                                clicked => {
+                                    root.fx-select(index);
+                                }
+                                bypass-clicked => {
+                                    root.fx-bypass(index);
+                                }
+                                edit-clicked => {
+                                    root.fx-edit(index);
+                                }
+                            }
+                        }
+
+                        if root.fx-slots.length == 0: Text {
+                            vertical-stretch: 1;
+                            text: @tr("No effects yet. Add one: they run top to bottom.");
+                            color: Theme.muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+
+                            Button {
+                                text: @tr("Add…");
+                                primary: !root.fx-adding;
+                                clicked => {
+                                    root.fx-add();
+                                }
+                            }
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+                            }
+
+                            IconButton {
+                                label: @tr("Move up");
+                                icon: "M 1.5 6.5 L 5 3 L 8.5 6.5";
+                                enabled: root.fx-selected > 0 && !root.fx-adding;
+                                clicked => {
+                                    root.fx-move(root.fx-selected, -1);
+                                }
+                            }
+
+                            IconButton {
+                                label: @tr("Move down");
+                                icon: "M 1.5 3.5 L 5 7 L 8.5 3.5";
+                                enabled: root.fx-selected >= 0 && root.fx-selected < root.fx-slots.length - 1 && !root.fx-adding;
+                                clicked => {
+                                    root.fx-move(root.fx-selected, 1);
+                                }
+                            }
+
+                            IconButton {
+                                label: @tr("Remove");
+                                icon: "M 2 2 L 8 8 M 8 2 L 2 8";
+                                enabled: root.fx-selected >= 0 && !root.fx-adding;
+                                clicked => {
+                                    root.fx-remove(root.fx-selected);
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 1px;
+                        background: Theme.border;
+                    }
+
+                    // Installed plug-ins to add.
+                    if root.fx-adding: VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 6px;
+
+                        HorizontalLayout {
+                            spacing: 6px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Heading {
+                                    text: @tr("Add an effect");
+                                }
+                            }
+
+                            Button {
+                                text: @tr("Folder…");
+                                flat: true;
+                                clicked => {
+                                    root.fx-add-folder();
+                                }
+                            }
+
+                            Button {
+                                text: @tr("Rescan");
+                                flat: true;
+                                clicked => {
+                                    root.fx-rescan();
+                                }
+                            }
+
+                            Button {
+                                text: @tr("Cancel");
+                                clicked => {
+                                    root.fx-cancel-add();
+                                }
+                            }
+                        }
+
+                        if root.fx-library-text != "": Text {
+                            text: root.fx-library-text;
+                            color: Theme.muted;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        ListView {
+                            vertical-stretch: 1;
+                            for plugin[index] in root.fx-library: Rectangle {
+                                height: 38px;
+                                border-radius: 6px;
+                                background: pick.has-hover ? Theme.hover : transparent;
+                                accessible-role: list-item;
+                                accessible-label: plugin.name;
+                                accessible-action-default => {
+                                    root.fx-pick(index);
+                                }
+
+                                VerticalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    alignment: center;
+
+                                    Text {
+                                        text: plugin.name;
+                                        color: Theme.text;
+                                        font-size: 12px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                    }
+
+                                    Text {
+                                        text: plugin.detail;
+                                        color: Theme.muted;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                pick := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.fx-pick(index);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // The selected plug-in's parameters.
+                    if !root.fx-adding: VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 6px;
+
+                        if root.fx-selected >= 0 && root.fx-params.length == 0: Text {
+                            text: root.fx-slots[root.fx-selected].editor ? @tr("Its settings are in its own window.") : @tr("No settings to show.");
+                            color: Theme.muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        if root.fx-selected < 0 && root.fx-slots.length > 0: Text {
+                            text: @tr("Pick an effect to see its settings.");
+                            color: Theme.muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        ListView {
+                            vertical-stretch: 1;
+                            for param[index] in root.fx-params: HorizontalLayout {
+                                height: 30px;
+                                spacing: 8px;
+                                padding-right: 8px;
+
+                                Text {
+                                    width: 34%;
+                                    text: param.title;
+                                    color: Theme.text;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    ParamSlider {
+                                        label: param.title;
+                                        value: param.value;
+                                        enabled: !param.read-only;
+                                        changed(v) => {
+                                            root.fx-param(index, v);
+                                        }
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    FxValue {
+                                        value: param.text;
+                                        label: param.title;
+                                        enabled: !param.read-only;
+                                        typed(text) => {
+                                            root.fx-param-typed(index, text);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.status == 3 && !root.settings-open && !root.effects-open: HorizontalLayout {
             spacing: 12px;
             vertical-stretch: 1;
 
@@ -1686,7 +2366,7 @@ export component App inherits Window {
                     }
 
                     // The scale's end marks reach past the bar.
-                    if root.input-meter: HorizontalLayout {
+                    if root.live: HorizontalLayout {
                         vertical-stretch: 1;
                         alignment: center;
                         padding-top: 10px;
@@ -1698,7 +2378,7 @@ export component App inherits Window {
                         }
                     }
 
-                    if !root.input-meter: Rectangle {
+                    if !root.live: Rectangle {
                         vertical-stretch: 1;
                     }
 
@@ -1724,6 +2404,17 @@ export component App inherits Window {
                         on: root.direct;
                         clicked => {
                             root.toggle-direct();
+                        }
+                    }
+
+                    // Opens the effects; lit while they change the sound.
+                    Toggle {
+                        text: "FX";
+                        label: @tr("Effects");
+                        on: root.fx-active;
+                        clicked => {
+                            root.effects-open = true;
+                            root.fx-opened();
                         }
                     }
                 }
@@ -1954,7 +2645,7 @@ export component App inherits Window {
             }
         }
 
-        if root.status != 3 && !root.settings-open: VerticalLayout {
+        if root.status != 3 && !root.settings-open && !root.effects-open: VerticalLayout {
             vertical-stretch: 1;
             alignment: center;
             spacing: 12px;
@@ -1988,8 +2679,8 @@ export component App inherits Window {
     }
 }
 
-// The icon in the menu bar (macOS), the notification area (Windows) or the
-// tray (Linux). Closing the window leaves the app running here.
+// The icon in the menu bar (macOS) or the notification area (Windows).
+// Closing the window leaves the app running here.
 export component Tray inherits SystemTrayIcon {
     // macOS draws menu bar icons in one color that follows the bar.
     in property <bool> monochrome;

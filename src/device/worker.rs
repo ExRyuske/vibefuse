@@ -3,8 +3,8 @@
 //! It finds the device, restores the saved mix on connect, applies writes
 //! and keeps the state, meters and sample rate up to date. Writes to the
 //! same parameter are coalesced, so a dragged fader only sends its latest
-//! value. Devices that are not live (Linux) are never polled: writes are
-//! collected and applied in one session once the user pauses. On Windows
+//! value. Devices that are not live are never polled: writes are collected
+//! and applied in one session once the user pauses. On Windows
 //! the driver's software mixer and ASIO settings are handled here too.
 
 use std::panic::{self, AssertUnwindSafe};
@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::protocol::{METER_SLOTS, RawState, Write, meter};
+use super::protocol::{METER_SLOTS, RawState, Write};
 use super::sls::{self, Gains, Sls};
 use super::{
     Asio, Bus, Device, DeviceInfo, Found, SampleRate, read_meters, read_state, write_params,
@@ -94,9 +94,6 @@ pub enum Event {
         info: DeviceInfo,
         state: RawState,
         live: bool,
-        /// The input's level is known: from a live device, or recorded from
-        /// its audio (Linux).
-        input_meter: bool,
         /// The driver's software mixer is available (Windows).
         mixer: bool,
     },
@@ -229,13 +226,8 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
             .is_some_and(|device| device.has_mixer())
     }
 
-    /// Meters are read: from the device, or the input's from its audio.
     fn metered(&self) -> bool {
-        self.pace.meters().is_some()
-            && self
-                .device
-                .as_ref()
-                .is_some_and(|device| device.is_live() || device.has_input_level())
+        self.pace.meters().is_some() && self.live()
     }
 
     fn deadline(&self) -> Instant {
@@ -307,11 +299,7 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
                 } else {
                     period
                 };
-            if self.live() {
-                self.poll_meters();
-            } else {
-                self.poll_input_level();
-            }
+            self.poll_meters();
         }
         if self.live() {
             if now >= self.next_state {
@@ -391,7 +379,6 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
                     }
                 }
                 let live = device.is_live();
-                let input_meter = live || device.has_input_level();
                 let now = Instant::now();
                 self.device = Some(device);
                 self.state = Some(state);
@@ -409,7 +396,6 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
                     info,
                     state,
                     live,
-                    input_meter,
                     mixer,
                 });
             }
@@ -477,28 +463,6 @@ impl<E: FnMut(Event) -> bool> Worker<E> {
             (Err(error), _) => self.failed(error),
             (Ok(()), None) => {}
         }
-    }
-
-    /// The input's meter of a device that is not live, from its audio;
-    /// silent while the recording is not there.
-    fn poll_input_level(&mut self) {
-        let level = self
-            .device
-            .as_mut()
-            .and_then(|device| device.input_level())
-            .unwrap_or(0.0);
-        let now = Instant::now();
-        if level > 0.0 {
-            self.silent_since = None;
-        } else {
-            let since = *self.silent_since.get_or_insert(now);
-            if self.pace == Pace::Visible && now.duration_since(since) > SILENCE_HOLD {
-                return;
-            }
-        }
-        let mut meters = [0.0; METER_SLOTS];
-        meters[meter::INPUT_1] = level;
-        self.emit(Event::Meters(meters));
     }
 
     /// The driver only measures the software mixer while switched on, so

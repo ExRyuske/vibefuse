@@ -1,6 +1,6 @@
 //! The virtual devices of the software mixer: the audio server plug-in on
-//! macOS, a PipeWire mixer on Linux, set up from here and connected to the
-//! card by the [`bridge`]. On Windows Arturia's driver has them.
+//! macOS, set up from here and connected to the card by the [`bridge`]. On
+//! Windows Arturia's driver has them.
 //!
 //! Looking them up asks the audio server, which can hang, so the window
 //! does it on a thread of its own ([`state_in_background`]).
@@ -70,9 +70,6 @@ pub enum State {
     /// Installed, but the audio system has not loaded them (yet).
     NotLoaded,
     Ready,
-    /// Something they need is missing, e.g. PipeWire.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    Unavailable(String),
     /// Not looked up yet.
     Checking,
     /// The audio server does not answer.
@@ -101,7 +98,6 @@ impl State {
                 String::new(),
                 true,
             ),
-            State::Unavailable(reason) => (reason.clone(), String::new(), false),
             State::Checking => (String::new(), String::new(), false),
             // Installing restarts the audio server, which may cure it.
             State::Unresponsive => (unresponsive(), tr!("Reinstall…"), false),
@@ -261,25 +257,7 @@ mod platform {
     }
 }
 
-#[cfg(target_os = "linux")]
-mod platform {
-    use super::State;
-    use crate::device::pipewire;
-
-    pub fn state() -> State {
-        pipewire::state()
-    }
-
-    pub fn install() -> Result<(), String> {
-        pipewire::install()
-    }
-
-    pub fn remove() -> Result<(), String> {
-        pipewire::remove()
-    }
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(windows)]
 mod platform {
     use super::State;
 
@@ -296,21 +274,18 @@ mod platform {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub mod bridge {
-    //! Connects the software mixer to the MiniFuse (macOS, Linux).
+    //! Connects the software mixer to the MiniFuse.
     //!
-    //! macOS: the plug-in lives inside the audio server and cannot reach the
-    //! card, so this app runs both in a private aggregate device: the card's
-    //! inputs go to the plug-in's hidden bridge device, and the "Monitor &
-    //! Phones" mix the plug-in returns goes to the card's outputs, on top of
-    //! what programs play there directly. It runs while the card is connected
-    //! and some program uses a virtual device or the card's input is heard in
+    //! The plug-in lives inside the audio server and cannot reach the card,
+    //! so this app runs both in a private aggregate device: the card's inputs
+    //! go to the plug-in's hidden bridge device, and the "Monitor & Phones"
+    //! mix the plug-in returns goes to the card's outputs, on top of what
+    //! programs play there directly. It runs while the card is connected and
+    //! some program uses a virtual device or the card's input is heard in
     //! that mix; everything is driven by CoreAudio notifications, so it costs
     //! nothing otherwise.
-    //!
-    //! Linux: PipeWire mixes by itself; this keeps the mixer linked to the
-    //! card's ports whenever they appear (see [`crate::device::pipewire`]).
     //!
     //! Only the running instance of the app (see [`crate::desktop::instance`])
     //! starts it.
@@ -318,7 +293,7 @@ pub mod bridge {
     use std::thread;
 
     /// Starts the bridge thread. `on_restart` runs on it when the audio server
-    /// came back from a restart (macOS), which loses the mixer's settings.
+    /// came back from a restart, which loses the mixer's settings.
     pub fn spawn(on_restart: impl Fn() + Send + 'static) {
         let _ = thread::Builder::new()
             .name("vibefuse-bridge".into())
@@ -326,13 +301,7 @@ pub mod bridge {
                 // A bug here stops the bridge, not the app; it starts again.
                 loop {
                     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        #[cfg(target_os = "macos")]
                         mac::run(&on_restart);
-                        #[cfg(target_os = "linux")]
-                        {
-                            let _ = &on_restart;
-                            crate::device::pipewire::keep_links();
-                        }
                     }));
                     if run.is_ok() {
                         return;
@@ -342,17 +311,13 @@ pub mod bridge {
             });
     }
 
-    /// Keeps the card's input running while it is heard in the "Monitor &
-    /// Phones" mix: with no program playing, nothing else would carry it to
-    /// the outputs. macOS runs the bridge, Linux links the input actively.
+    /// Keeps the bridge running while the card's input is heard in the
+    /// "Monitor & Phones" mix: with no program playing, nothing else would
+    /// carry it to the outputs.
     pub fn monitor_input(on: bool) {
-        #[cfg(target_os = "macos")]
         mac::monitor_input(on);
-        #[cfg(target_os = "linux")]
-        crate::device::pipewire::monitor_input(on);
     }
 
-    #[cfg(target_os = "macos")]
     mod mac {
         use std::ffi::c_void;
         use std::sync::Mutex;

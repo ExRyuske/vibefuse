@@ -270,20 +270,8 @@ msgstr "Не удалось включить аудиорежим: {}"
 msgid "Couldn't change the sample rate: {}"
 msgstr "Не удалось сменить частоту: {}"
 
-msgid "No access to the USB device: install the udev rule (see the README)"
-msgstr "Нет доступа к USB-устройству: установите правило udev (см. README)"
-
 msgid "No access to the USB device"
 msgstr "Нет доступа к USB-устройству"
-
-msgid "The sound server sets the sample rate"
-msgstr "Частоту задаёт звуковой сервер"
-
-msgid "Needs PipeWire and systemd. Missing: {}."
-msgstr "Нужны PipeWire и systemd. Не найдено: {}."
-
-msgid "The PipeWire mixer did not start"
-msgstr "Микшер PipeWire не запустился"
 
 msgid "Install Arturia's MiniFuse Audio Driver"
 msgstr "Установите драйвер Arturia MiniFuse Audio Driver"
@@ -326,3 +314,117 @@ msgstr "Свой"
 
 msgid "Accent color, HEX"
 msgstr "Цвет акцента, HEX"
+
+msgid "Effects"
+msgstr "Эффекты"
+
+msgid "Open"
+msgstr "Открыть"
+
+msgid "Effects on {}"
+msgstr "Эффекты: {}"
+
+msgid "No effects yet. Add one: they run top to bottom."
+msgstr "Эффектов пока нет. Добавьте их: звук проходит их сверху вниз."
+
+msgid "Add…"
+msgstr "Добавить…"
+
+msgid "Move up"
+msgstr "Выше"
+
+msgid "Move down"
+msgstr "Ниже"
+
+msgid "Add an effect"
+msgstr "Добавить эффект"
+
+msgid "Folder…"
+msgstr "Папка…"
+
+msgid "Rescan"
+msgstr "Найти заново"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Its settings are in its own window."
+msgstr "Настройки — в окне самого эффекта."
+
+msgid "No settings to show."
+msgstr "Настроек нет."
+
+msgid "Pick an effect to see its settings."
+msgstr "Выберите эффект, чтобы увидеть его настройки."
+
+msgid "On"
+msgstr "Вкл"
+
+msgid "Off"
+msgstr "Выкл"
+
+msgid "Not installed"
+msgstr "Не установлен"
+
+msgid "The file is from a newer version"
+msgstr "Файл от более новой версии"
+
+msgid "Arturia's ASIO driver is not installed"
+msgstr "Драйвер ASIO от Arturia не установлен"
+
+msgid "The effects did not start: {}"
+msgstr "Эффекты не запустились: {}"
+
+msgid "Looking for plug-ins…"
+msgstr "Ищу плагины…"
+
+msgid "{} crashed VibeFuse while it was looked at, and is skipped until it changes."
+msgstr "{} уронил VibeFuse при проверке и пропускается, пока не изменится."
+
+msgid "No effects found. Add the folder you keep plug-ins in."
+msgstr "Эффекты не найдены. Добавьте папку, где лежат плагины."
+
+msgid "Effects imported"
+msgstr "Эффекты импортированы"
+
+msgid "Effects imported; {} of them did not load"
+msgstr "Эффекты импортированы; не загрузилось: {}"
+
+msgid "Effects exported"
+msgstr "Эффекты экспортированы"
+
+msgid "Folder with plug-ins"
+msgstr "Папка с плагинами"
+
+msgid "Import effects"
+msgstr "Импорт эффектов"
+
+msgid "Export effects"
+msgstr "Экспорт эффектов"
+
+msgid "Effects chain"
+msgstr "Цепочка эффектов"
+
+msgid "Value of {}"
+msgstr "Значение: {}"
+
+msgid "{} (not connected)"
+msgstr "{} (не подключено)"
+
+msgid "“{}” is not a value of this setting"
+msgstr "«{}» — не значение этой настройки"
+
+msgid "The output is not connected"
+msgstr "Выход не подключён"
+
+msgid "Choose where the effects play: the MiniFuse to hear yourself, or a VibeFuse device to have them in the mixer."
+msgstr "Выберите, куда выводить эффекты: MiniFuse, чтобы слышать себя, или устройство VibeFuse, чтобы они были в микшере."
+
+msgid "Input 1 plays on the chosen output with these effects. A VibeFuse device brings it into the mixer as a strip of its own."
+msgstr "Вход 1 с этими эффектами звучит на выбранном выходе. Устройство VibeFuse приводит его в микшер отдельной полосой."
+
+msgid "Choose where the effects play. Out 3/4 come back in the mixer as Virtual 3/4."
+msgstr "Выберите, куда выводить эффекты. Out 3/4 возвращаются в микшер как Virtual 3/4."
+
+msgid "While the effects are on, VibeFuse holds the ASIO driver: other programs cannot use it. Out 3/4 come back in the mixer as Virtual 3/4."
+msgstr "Пока эффекты включены, VibeFuse занимает драйвер ASIO, и другие программы не могут им пользоваться. Out 3/4 возвращаются в микшер как Virtual 3/4."

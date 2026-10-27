@@ -7,10 +7,6 @@
 #   Windows  VibeFuse-<version>-windows-x64.exe, the program itself, and
 #            THIRD-PARTY-NOTICES.txt beside it; in Git Bash. Elsewhere
 #            `sh scripts/package.sh windows` cross-builds with mingw-w64.
-#   Linux    VibeFuse-<version>-linux-<arch>.tar.gz and, where rpmbuild is
-#            installed, the .rpm for Fedora. Needs build-essential pkg-config
-#            libfontconfig1-dev libfreetype-dev libxkbcommon-dev (on Fedora gcc
-#            fontconfig-devel freetype-devel libxkbcommon-devel).
 # The packages carry THIRD-PARTY-NOTICES.txt, which takes Python 3.
 set -eu
 
@@ -159,36 +155,11 @@ windows() {
 	echo "$exe"
 }
 
-linux() {
-	cargo build --profile dist --locked
-
-	name=VibeFuse-$version-linux-$(uname -m)
-	staging=$out/$name
-	rm -rf "$staging"
-	mkdir -p "$staging"
-	cp "$out/vibefuse" packaging/linux/install.sh packaging/linux/vibefuse.desktop \
-		packaging/linux/70-vibefuse.rules README.md README.ru.md LICENSE "$staging/"
-	cp assets/icon-256.png "$staging/vibefuse.png"
-	notices "$staging"
-	tar -C "$out" -czf "$out/$name.tar.gz" "$name"
-	echo "$out/$name.tar.gz"
-	if command -v rpmbuild >/dev/null 2>&1; then
-		rpmbuild -bb --quiet --define "_topdir $here/$out/rpm" \
-			--define "_sourcedir $here/$staging" --define "version $version" \
-			packaging/linux/vibefuse.spec
-		mv "$out"/rpm/RPMS/*/vibefuse-*.rpm "$out/$name.rpm"
-		rm -rf "$out/rpm"
-		echo "$out/$name.rpm"
-	fi
-	rm -rf "$staging"
-}
-
 case "${1:-$(uname -s)}" in
 Darwin | macos) macos ;;
 MINGW* | MSYS* | CYGWIN* | windows) windows ;;
-Linux | linux) linux ;;
 *)
-	echo "usage: sh scripts/package.sh [macos | windows | linux]" >&2
+	echo "usage: sh scripts/package.sh [macos | windows]" >&2
 	exit 2
 	;;
 esac

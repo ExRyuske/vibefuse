@@ -10,10 +10,8 @@ pub mod worker;
 pub mod coreaudio;
 #[cfg(target_os = "macos")]
 pub use coreaudio::hal_mixer;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 mod libusb;
-#[cfg(target_os = "linux")]
-pub mod pipewire;
 #[cfg(windows)]
 mod thesycon;
 
@@ -63,7 +61,7 @@ pub struct DeviceInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SampleRate {
-    /// `None` when the system does not report it (Linux while idle).
+    /// `None` when the system does not report it.
     pub current: Option<u32>,
     pub available: Vec<u32>,
     pub settable: bool,
@@ -80,9 +78,9 @@ pub struct Asio {
 }
 
 /// A software mixer beside the device: the virtual devices this app sets up
-/// on macOS and Linux. It takes the properties of the Windows driver's mixer
-/// ([`sls`]), so everything above works the same on every system.
-#[cfg(not(windows))]
+/// on macOS. It takes the properties of the Windows driver's mixer ([`sls`]),
+/// so everything above works the same on both systems.
+#[cfg(target_os = "macos")]
 pub trait SoftMixer: Send {
     fn set(&mut self, property: &[u8]) -> Result<()>;
     /// Fills in a meter query.
@@ -90,20 +88,9 @@ pub trait SoftMixer: Send {
 }
 
 /// The software mixer of this system, when its virtual devices are set up.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn soft_mixer() -> Option<Box<dyn SoftMixer>> {
-    #[cfg(target_os = "macos")]
-    {
-        hal_mixer::find().map(|mixer| Box::new(mixer) as Box<dyn SoftMixer>)
-    }
-    #[cfg(target_os = "linux")]
-    {
-        pipewire::find().map(|mixer| Box::new(mixer) as Box<dyn SoftMixer>)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        None
-    }
+    hal_mixer::find().map(|mixer| Box::new(mixer) as Box<dyn SoftMixer>)
 }
 
 /// Raw access to the control interface: class requests to interface 0.
@@ -116,9 +103,8 @@ pub trait Link {
 pub trait Device: Send {
     fn info(&self) -> &DeviceInfo;
 
-    /// Whether requests can be sent at any time. On Linux every session
-    /// briefly takes the interface away from the kernel audio driver, so
-    /// the device is only touched when something has to change.
+    /// Whether requests can be sent at any time; the simulated device can
+    /// pretend otherwise.
     fn is_live(&self) -> bool;
 
     /// Whether the device is still plugged in, checked without a session.
@@ -155,18 +141,6 @@ pub trait Device: Send {
     fn set_asio(&mut self, _size: u32, _safe_mode: bool) -> Result<()> {
         Err(Error::new("ASIO is Windows only"))
     }
-
-    /// Whether a device that is not live still tells the level of its
-    /// input, from the audio rather than the device (Linux).
-    fn has_input_level(&self) -> bool {
-        false
-    }
-
-    /// The peak of Input 1 (0..=1) since the last call, see
-    /// [`Self::has_input_level`]; `None` while it is not known.
-    fn input_level(&mut self) -> Option<f32> {
-        None
-    }
 }
 
 pub enum Found {
@@ -193,20 +167,20 @@ pub fn system_bus() -> Box<dyn Bus> {
     {
         Box::new(thesycon::ThesyconBus::new())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
         Box::new(libusb::LibusbBus::new())
     }
 }
 
 /// What to tell when the device thread does not report at all: on macOS it
-/// waits for the audio server, elsewhere for the driver or USB.
+/// waits for the audio server, on Windows for the driver.
 pub fn unresponsive() -> String {
     #[cfg(target_os = "macos")]
     {
         crate::virtual_devices::unresponsive()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     {
         crate::tr!("MiniFuse 1 is not responding. Reconnect it if this lasts.")
     }

@@ -1,7 +1,7 @@
 //! Settings this app keeps between runs.
 //!
-//! Like Arturia's MiniFuse Control Center, the loopback mix (macOS, Linux) and the software
-//! mixer (Windows) are remembered per serial number on the computer and
+//! Like Arturia's MiniFuse Control Center, the loopback mix and the software
+//! mixer are remembered per serial number on the computer and
 //! pushed back to the device when it is connected: the firmware starts with
 //! its defaults after every power-up, the driver's mixer after every
 //! reconnection.
@@ -38,6 +38,21 @@ pub struct Settings {
     pub accent: Accent,
     /// The user's own accent color, `#rrggbb`.
     pub custom_accent: String,
+    pub effects: EffectsSettings,
+}
+
+/// The effects on Input 1.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EffectsSettings {
+    pub enabled: bool,
+    pub chain: Vec<crate::fx::Entry>,
+    /// Folders to look for plug-ins in beside the usual ones.
+    pub folders: Vec<PathBuf>,
+    /// Where they play (see [`crate::fx::output`]), and its name for when
+    /// it is not connected.
+    pub output: Option<String>,
+    pub output_name: String,
 }
 
 /// The accent color of the window.
@@ -95,19 +110,15 @@ impl Default for Settings {
             language: Language::System,
             accent: Accent::default(),
             custom_accent: "#ff8a3d".to_owned(),
+            effects: EffectsSettings::default(),
         }
     }
 }
 
-/// Where this app keeps its files: `~/Library/Application Support/VibeFuse`,
-/// `%APPDATA%\VibeFuse`, `~/.config/vibefuse`.
+/// Where this app keeps its files: `~/Library/Application Support/VibeFuse`
+/// or `%APPDATA%\VibeFuse`.
 pub fn app_dir() -> Option<PathBuf> {
-    let name = if cfg!(target_os = "linux") {
-        "vibefuse"
-    } else {
-        "VibeFuse"
-    };
-    Some(dirs::config_dir()?.join(name))
+    Some(dirs::config_dir()?.join("VibeFuse"))
 }
 
 impl Settings {

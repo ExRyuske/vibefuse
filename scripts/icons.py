@@ -158,7 +158,7 @@ def write_ico(path, sizes):
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    # The window and Linux use 256 px; macOS scales its icon from 1024 px.
+    # The window uses 256 px; macOS scales its icon from 1024 px.
     for size in (256, 1024):
         write_png(f"{OUT}/icon-{size}.png", size, size, app_icon(size))
     write_ico(f"{OUT}/icon.ico", (16, 32, 48, 64, 256))
