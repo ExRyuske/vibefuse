@@ -1,5 +1,0 @@
-# Arturia MiniFuse 1: lets the logged-in user talk to the device (audio mode
-# and mass-storage mode), so VibeFuse runs without root.
-# Install to /etc/udev/rules.d/ (install.sh does it).
-SUBSYSTEM=="usb", ATTR{idVendor}=="1c75", ATTR{idProduct}=="af80", TAG+="uaccess"
-SUBSYSTEM=="usb", ATTR{idVendor}=="1c75", ATTR{idProduct}=="af82", TAG+="uaccess"
