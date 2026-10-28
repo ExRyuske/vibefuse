@@ -1,6 +1,6 @@
 [package]
 name = "vibefuse"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2024"
 rust-version = "1.89"
 description = "Control panel for the Arturia MiniFuse 1 audio interface"
