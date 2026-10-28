@@ -73,18 +73,41 @@ fn build_mixer_driver() {
         .arg("driver/macos/test_mixer.c"));
 }
 
-/// The program icon and version information of the .exe, compiled with
-/// whichever resource compiler the toolchain has. Without one the build
-/// goes on: the window still sets its icon at run time.
+/// The .exe's manifest: it runs as the user who starts it (without the
+/// request, Windows guesses whether a program is an installer that wants an
+/// administrator) and is made for Windows 10 and 11.
+const WINDOWS_MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>
+"#;
+
+/// The program icon, version information and manifest of the .exe,
+/// compiled with whichever resource compiler the toolchain has. Without one
+/// the build goes on: the window still sets its icon at run time.
 fn embed_windows_resources() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    let manifest = out.join("vibefuse.manifest");
+    std::fs::write(&manifest, WINDOWS_MANIFEST).expect("manifest");
     let version = std::env::var("CARGO_PKG_VERSION").expect("version");
     let numbers: Vec<&str> = version.split(['.', '-']).take(3).collect();
     let [major, minor, patch] = [0, 1, 2].map(|i| numbers.get(i).copied().unwrap_or("0"));
     let icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon.ico");
     let script = format!(
         r#"1 ICON "{icon}"
+1 24 "{manifest}"
 1 VERSIONINFO
 FILEVERSION {major},{minor},{patch},0
 PRODUCTVERSION {major},{minor},{patch},0
@@ -108,6 +131,7 @@ BEGIN
 END
 "#,
         icon = icon.display().to_string().replace('\\', "/"),
+        manifest = manifest.display().to_string().replace('\\', "/"),
     );
     let rc = out.join("vibefuse.rc");
     std::fs::write(&rc, script).expect("resource script");
@@ -127,6 +151,7 @@ END
     if msvc {
         tools.extend(windows_sdk_rc());
     }
+    let mut refused = Vec::new();
     for tool in &tools {
         let mut command = Command::new(tool);
         if msvc {
@@ -134,12 +159,24 @@ END
         } else {
             command.arg("-i").arg(&rc).arg("-o").arg(&compiled);
         }
-        if command.status().is_ok_and(|status| status.success()) {
-            println!("cargo:rustc-link-arg-bins={}", compiled.display());
-            return;
+        match command.status() {
+            Ok(status) if status.success() => {
+                println!("cargo:rustc-link-arg-bins={}", compiled.display());
+                return;
+            }
+            Ok(_) => refused.push(tool.display().to_string()),
+            Err(_) => {}
         }
     }
-    println!("cargo:warning=no resource compiler found: the .exe gets no icon");
+    // A script the compilers refuse would otherwise leave the .exe without
+    // its manifest unnoticed.
+    assert!(
+        refused.is_empty(),
+        "{} could not compile {}",
+        refused.join(", "),
+        rc.display()
+    );
+    println!("cargo:warning=no resource compiler found: the .exe gets no icon nor manifest");
 }
 
 /// `rc.exe` of the newest Windows SDK: outside a developer prompt it is not

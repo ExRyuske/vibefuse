@@ -171,8 +171,8 @@ pub mod instance {
 
 pub mod autostart {
     //! Starting VibeFuse at login, in the tray without a window: a LaunchAgent
-    //! on macOS, the `Run` key of the registry on Windows. Switching it only changes the registration; the running app
-    //! is left alone.
+    //! on macOS, the `Run` key of the registry on Windows. Switching it only
+    //! changes the registration; the running app is left alone.
 
     use std::path::PathBuf;
 
@@ -269,50 +269,73 @@ pub mod autostart {
         }
     }
 
+    /// Through the registry's own functions: a hidden `reg.exe` writing to
+    /// the `Run` key is what antivirus heuristics look for in malware.
     #[cfg(windows)]
     mod platform {
-        use std::process::{Command, Stdio};
+        use std::ptr;
+
+        use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+        use windows_sys::Win32::System::Registry::{
+            HKEY_CURRENT_USER, REG_SZ, RRF_RT_ANY, RegDeleteKeyValueW, RegGetValueW,
+            RegSetKeyValueW,
+        };
 
         use super::*;
 
-        const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+        const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
         const VALUE: &str = "VibeFuse";
 
-        fn reg(args: &[&str]) -> Result<(), String> {
-            use std::os::windows::process::CommandExt;
-            /// `CREATE_NO_WINDOW`: no console flashes up.
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            let output = Command::new("reg")
-                .args(args)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-                .map_err(|e| format!("reg: {e}"))?;
-            if output.status.success() {
-                Ok(())
-            } else {
-                Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+        fn wide(text: &str) -> Vec<u16> {
+            text.encode_utf16().chain(std::iter::once(0)).collect()
+        }
+
+        fn checked(code: u32) -> Result<(), String> {
+            match code {
+                0 => Ok(()),
+                code => Err(std::io::Error::from_raw_os_error(code as i32).to_string()),
             }
         }
 
         pub fn is_enabled() -> bool {
-            reg(&["query", KEY, "/v", VALUE]).is_ok()
+            let (key, value) = (wide(KEY), wide(VALUE));
+            // SAFETY: only asks whether the value is there.
+            let code = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    value.as_ptr(),
+                    RRF_RT_ANY,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            code == 0
         }
 
         pub fn enable() -> Result<(), String> {
-            let command = format!("\"{}\" {BACKGROUND}", executable()?.display());
-            reg(&[
-                "add", KEY, "/v", VALUE, "/t", "REG_SZ", "/d", &command, "/f",
-            ])
+            let (key, value) = (wide(KEY), wide(VALUE));
+            let command = wide(&format!("\"{}\" {BACKGROUND}", executable()?.display()));
+            // SAFETY: the data is the command with its NUL, sized in bytes.
+            checked(unsafe {
+                RegSetKeyValueW(
+                    HKEY_CURRENT_USER,
+                    key.as_ptr(),
+                    value.as_ptr(),
+                    REG_SZ,
+                    command.as_ptr().cast(),
+                    (command.len() * 2) as u32,
+                )
+            })
         }
 
         pub fn disable() -> Result<(), String> {
-            if is_enabled() {
-                reg(&["delete", KEY, "/v", VALUE, "/f"])
-            } else {
-                Ok(())
+            let (key, value) = (wide(KEY), wide(VALUE));
+            // SAFETY: plain Win32 call with NUL-terminated names.
+            match unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr()) } {
+                ERROR_FILE_NOT_FOUND => Ok(()),
+                code => checked(code),
             }
         }
     }
